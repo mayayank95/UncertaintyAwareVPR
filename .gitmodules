@@ -1,0 +1,3 @@
+[submodule "models/cosplace"]
+	path = models/cosplace
+	url = https://github.com/gmberton/CosPlace.git
