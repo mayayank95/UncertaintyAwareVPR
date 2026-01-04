@@ -1,5 +1,6 @@
 {
   "data_folder": "/home/maya/Desktop/yoli/datasets/",
+  "local_data_folder": "/datasets",
   "datasets": "sf_xl",
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" }
