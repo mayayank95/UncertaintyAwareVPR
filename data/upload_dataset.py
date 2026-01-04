@@ -39,7 +39,7 @@ def upload_dataset(cfg, entries) -> Dict[str, Dict[str, Path]]:
         print(f"Running in local mode: using datasets in-place from {str(data_root)}")
 
     # Collect train/validation/test paths for each dataset
-    dataset_paths: Dict[str, Dict[str, str]] = {}
+    dataset_paths: Dict[str, Dict[str, Path]] = {}
 
     for e in entries:
         # ---- Validate entry ----
