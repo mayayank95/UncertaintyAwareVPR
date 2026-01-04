@@ -77,13 +77,10 @@ def upload_dataset(cfg, entries) -> Dict[str, Dict[str, Path]]:
                     if verbose:
                         print(f"[{name}] Creating destination folder: {dst}")
                     _ensure_dir(dst)
-            else:
+            if not dry_run:
                 if verbose:
-                    print(f"[{name}] Destination folder already exists: {dst}") 
-                    # unzip the files from src to dst of all the folders and files in src
-                    if verbose:
-                        print(f"[{name}] Extracting dataset from {src} to {dst}")  
-                    unzip_folder(src, dst)      
+                    print(f"[{name}] Extracting dataset from {src} to {dst}")  
+                unzip_folder(src, dst) # Now it runs whether dst was just created or already existed
 
         # ---- Record train/validation/test paths (non-strict resolve to allow non-existing in dry-run) ----
         train_p = (dst / 'train').resolve(strict=False)
