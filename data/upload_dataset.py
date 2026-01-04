@@ -24,11 +24,8 @@ def unzip_folder(src: Path, dst: Path):
                 member.filename = str(Path(*Path(member.filename).parts[1:]))
                 zf.extract(member, out_dir)
 
-def upload_dataset() -> Dict[str, Dict[str, Path]]:
+def upload_dataset(cfg, entries) -> Dict[str, Dict[str, Path]]:
     
-    # ---- Load and build config ----       
-    cfg, entries = build_config()
-
     # ---- Convert string paths (from parser.normalize) to Path objects ONCE ----
     colab = cfg["colab"]
     dry_run = cfg["dry_run"]
