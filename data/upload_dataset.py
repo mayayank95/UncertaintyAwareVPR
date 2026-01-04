@@ -3,8 +3,6 @@ from pathlib import Path
 import zipfile
 from typing import Dict
 
-from configs.parser import build_config
-
 def _ensure_dir(dst):
     # check if path exists else create it
     if not dst.exists():
