@@ -9,8 +9,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Dataset preparation: config-first, CLI overrides.")
     p.add_argument("--config", type=str, default="configs/datasets.json", help="Path to datasets config JSON")
 
-    p.add_argument("--drive-data-folder", type=str, default=None, help="Root folder containing raw datasets (overrides config value).")
-    p.add_argument("--data-folder", type=str, default=None,  help="Target folder for prepared datasets (overrides config value).")
+    p.add_argument("--data_folder", type=str, default=None, help="Root folder containing raw datasets (overrides config value).")
+    p.add_argument("--local_data_folder", type=str, default=None,  help="colab use-Target folder for prepared datasets (overrides config value).")
 
     # Optional: filter which entries to run 
     p.add_argument("--datasets", type=str, default=None, help='Datasets to process (e.g. "all", "sf_xl", or "sf_xl,pitts30k")')
@@ -19,11 +19,11 @@ def parse_args() -> argparse.Namespace:
     # - if not provided => False
     # - if provided => True
     p.add_argument("--colab", action="store_true", help="Run in Google Colab mode (overrides config).")
-    p.add_argument("--dry-run", action="store_true", help="Print actions without performing file operations.")
+    p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations.")
     p.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
 
     # Optional: write the merged config out
-    p.add_argument("--save-config", type=str, default=None, help="Save merged configuration to this path (json)")
+    p.add_argument("--save_config", type=str, default=None, help="Save merged configuration to this path (json)")
     return p.parse_args()
 
 
@@ -55,20 +55,16 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(merged)
 
     # Paths: store as strings in config, but normalize to expanded string paths
-    for k in ("drive_data_folder", "data_folder"):
+    for k in ("data_folder", "local_data_folder"):
         if k in out and out[k] is not None:
             out[k] = str(Path(out[k]).expanduser())
-
     # datasets: "all" or comma-separated string
     if "datasets" in out and out["datasets"] is not None:
         v = str(out["datasets"]).strip()
-
         if v.lower() == "all":
             out["datasets"] = "all"
         else:
             out["datasets"] = [s.strip() for s in v.split(",") if s.strip()]
-
-
     return out
 
 
@@ -91,8 +87,9 @@ def select_entries(entries: List[Dict[str, Any]], datasets: Any) -> List[Dict[st
 
 
 def build_config():
-    args = parse_args()
+    args = parse_args() # Load CLI args
 
+    # Load config from file
     cfg_path = Path(args.config)
     cfg = load_config(cfg_path)
 
@@ -100,8 +97,8 @@ def build_config():
     merged = normalize(merged)
 
     # REQUIRED config fields
-    if "drive_data_folder" not in merged or "data_folder" not in merged:
-        raise ValueError("Missing required fields: 'drive_data_folder' and/or 'data_folder' (in config or via CLI).")
+    if "data_folder" not in merged:
+        raise ValueError("Missing required fields: 'data_folder' (in config or via CLI).")
 
     entries = merged.get("entries")
     if not isinstance(entries, list) or len(entries) == 0:
@@ -120,10 +117,13 @@ def build_config():
     # Debug prints
     if merged.get("verbose", False):
         print("Config file:", str(cfg_path))
-        print("drive_data_folder:", merged["drive_data_folder"])
         print("data_folder:", merged["data_folder"])
-        print("colab:", merged.get("colab", False), "dry_run:", merged.get("dry_run", False))
+        print("colab:", merged["colab"], "dry_run:", merged["dry_run"])
+        if merged["colab"]:
+            print("local_data_folder:", merged["local_data_folder"])
         print("entries:", [e.get("name") for e in entries])
+
+    return merged, entries
 
 if __name__ == "__main__":
     build_config()

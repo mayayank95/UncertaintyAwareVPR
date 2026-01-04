@@ -1,0 +1,8 @@
+{
+  "data_folder": "/content/drive/MyDrive/Datasets",
+  "local_data_folder": "./datasets",
+  "datasets": "sf_xl",
+  "entries": [
+    { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" }
+  ]
+}
