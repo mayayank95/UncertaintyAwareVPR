@@ -1,3 +1,6 @@
 [submodule "models/cosplace"]
 	path = models/cosplace
 	url = https://github.com/gmberton/CosPlace.git
+[submodule "utils/VPR-methods-evaluation"]
+	path = utils/VPR-methods-evaluation
+	url = https://github.com/gmberton/VPR-methods-evaluation.git
