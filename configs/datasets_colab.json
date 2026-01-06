@@ -6,5 +6,8 @@
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" }
   ],
-  "resume_model": "/content/drive/MyDrive/Models/CosPlace/default/2025-10-27_11-48-39/best_model.pth"
+  "resume_model": "/content/drive/MyDrive/Models/CosPlace/default/2025-10-27_11-48-39/best_model.pth",
+  "backbone": "ResNet50",
+  "fc_output_dim": 2048,
+  "drive_logs": "/content/drive/MyDrive/Models/CosPlace"
 }
