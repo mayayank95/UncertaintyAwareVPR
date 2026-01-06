@@ -53,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     # model parameters
     p.add_argument("--backbone", type=str, default="ResNet18", help="basic backbone model")
     p.add_argument("--fc_output_dim", type=int, default=512, help="dimension of the output feature vector")
+    p.add_argument("--resume_model", type=str, default=None, help="model checkpoint to resume training from/evaluate")
+
 
     return p.parse_args()
 
