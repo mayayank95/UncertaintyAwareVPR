@@ -1,6 +1,7 @@
 {
   "data_folder": "/content/drive/MyDrive/Datasets",
   "local_data_folder": "/content/datasets",
+  "logs_folder": "/content/drive/MyDrive/Models/CosPlace",
   "datasets": "sf_xl",
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" }
