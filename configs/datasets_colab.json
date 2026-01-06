@@ -2,7 +2,7 @@
   "data_folder": "/content/drive/MyDrive/Datasets",
   "local_data_folder": "/content/datasets",
   "logs_folder": "/content/drive/MyDrive/Models/CosPlace",
-  "datasets": "sf_xl",
+  "datasets": "st_lucia",
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" },
     { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" }
