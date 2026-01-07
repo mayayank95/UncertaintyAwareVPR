@@ -5,7 +5,8 @@
   "datasets": "st_lucia",
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" },
-    { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" }
+    { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" },
+    { "name": "Pitts30K", "src_rel": "Pitts30K", "dst_rel": "Pitts30K" }
   ],
   "resume_model": "/content/drive/MyDrive/Models/CosPlace/default/2025-10-27_11-48-39/best_model.pth",
   "backbone": "ResNet50",
