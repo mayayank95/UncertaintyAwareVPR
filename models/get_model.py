@@ -1,5 +1,5 @@
 import torch
-from models.cosplace.cosplace_model import cosplace_network
+from models.cosplace_uncertainty.cosplace_model import cosplace_network
 import logging
 
 logger = logging.getLogger(__name__)
