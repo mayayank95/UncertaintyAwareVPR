@@ -3,30 +3,54 @@ from pathlib import Path
 import argparse
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict, Tuple, Optional, List
+import sys
+import torch
 
 # Create a logger for this module
 logger = logging.getLogger(__name__)
 
 def setup_logging(logs_folder: Optional[str], verbose: bool):
     """
-    Configures logging to both the console and a file.
-    If logs_folder is provided, a file named 'dataset_prep.log' will be created there.
+    Configures a unified logging system:
+    - Console: Shows clean INFO messages (no clutter).
+    - File: Stores detailed DEBUG logs in a timestamped folder.
     """
-    level = logging.DEBUG if verbose else logging.INFO
-    handlers = [logging.StreamHandler()]  # Console handler
+    # The Root level is the "Master Gatekeeper"
+    root_level = logging.DEBUG if verbose else logging.INFO 
+    
+    # Define handlers list
+    handlers = []
+
+    # 1. Console Handler (The "Screen" output)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)  # Screen stays clean even in verbose mode
+    console_formatter = logging.Formatter("%(levelname)s: %(message)s")
+    console_handler.setFormatter(console_formatter)
+    handlers.append(console_handler)
 
     if logs_folder:
-        log_dir = Path(logs_folder)
+        # Create a unique folder for this specific run
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_dir = Path(logs_folder) / timestamp
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "dataset_prep.log"
-        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        
+        # 2. File Handler (The "Record" output)
+        log_file = log_dir / "main_execution.log"
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(root_level)  # Saves everything allowed by the master gatekeeper
+        file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        file_handler.setFormatter(file_formatter)
+        handlers.append(file_handler)
 
+    # Apply configuration to the global logging system
     logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=handlers
+        level=root_level,
+        handlers=handlers,
+        force=True  # Ensures this config overrides any defaults
     )
+    return log_dir     
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Dataset preparation: config-first, CLI overrides.")
@@ -47,17 +71,34 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations.")
     p.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
 
-    # Optional: write the merged config out
-    p.add_argument("--save_config", type=str, default=None, help="Save merged configuration to this path (json)")
-
+    # Optional: save post-merge config
+    p.add_argument("--save_config", action="store_true", help="Save merged configuration to logs folder")
+    p.add_argument("--save_descriptors",action="store_true", help="set to True if you want to save the descriptors extracted by the model")
+    
     # model parameters
     p.add_argument("--backbone", type=str, default="ResNet18", help="basic backbone model")
-    p.add_argument("--fc_output_dim", type=int, default=512, help="dimension of the output feature vector")
+    p.add_argument("--descriptors_dimension", type=int, default=512, help="dimension of the output feature vector")
     p.add_argument("--resume_model", type=str, default=None, help="model checkpoint to resume training from/evaluate")
+    p.add_argument("--method", type=str, default=None, help="model name")
+    p.add_argument("--positive_dist_threshold", type=int, default=25, help="Distance in meters for a prediction to be considered a positive.")
+    p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square).")
+    p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation.") 
+    p.add_argument("--batch_size", type=int, default=32, help="Batch size for DataLoader.")
 
+    # system parameters
+    p.add_argument("--device", type=str, default="auto", help="Device to use: 'cuda', 'cpu', or 'auto'")
+    p.add_argument("--num_workers", type=int, default=2, help="Number of DataLoader workers")
 
-    return p.parse_args()
+    # evaluation parameters
+    p.add_argument("--recall_values", type=int, nargs="+", default=[1, 5, 10, 20], help="Recall values to compute during evaluation.")
 
+    # visualization parameters
+    p.add_argument("--num_preds_to_save", type=int, default=3, help="Number of predictions to save per query.")
+    p.add_argument("--num_queries_to_save", type=int, default=3, help="Number of queries to save their predictions.")
+    p.add_argument("--save_only_wrong_preds", action="store_true", help="If set, only save wrongly predicted queries.") 
+
+    return p.parse_args()  
+    
 
 def load_config(path: Path) -> Dict[str, Any]:
     path = path.expanduser()
@@ -73,12 +114,11 @@ def merge_cfg_with_cli(cfg: Dict[str, Any], args: argparse.Namespace) -> Tuple[D
     """
     cli = vars(args).copy()
     cli.pop("config", None)
-    save_config = cli.pop("save_config", None)
 
     overrides = {k: v for k, v in cli.items() if v is not None}
     merged = dict(cfg)
     merged.update(overrides)
-    return merged, save_config
+    return merged
 
 
 def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,6 +140,14 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
                 out[element] = "all"
             else:
                 out[element] = [s.strip() for s in v.split(",") if s.strip()]
+
+    # Device auto-detection
+    requested_device = str(out.get("device", "auto")).lower()
+    if requested_device == "auto" or requested_device == "cuda":
+        out["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        out["device"] = "cpu"
+  
     return out
 
 
@@ -128,17 +176,21 @@ def build_config():
     cfg_path = Path(args.config)
     cfg = load_config(cfg_path)
 
-    merged, save_path = merge_cfg_with_cli(cfg, args)
+    merged = merge_cfg_with_cli(cfg, args)
     merged = normalize(merged)
 
     # Initialize the logging system
-    setup_logging(merged.get("logs_folder"), merged.get("verbose", False))
+    log_dir = setup_logging(merged.get("logs_folder"), merged.get("verbose", False))
+    merged['logs_folder'] = str(log_dir)  # Ensure logs_folder is set to the actual log_dir used
 
     # REQUIRED config fields
-    if "data_folder" not in merged:
-        logger.critical("Missing required fields: 'data_folder'")
-        raise ValueError("Missing required fields: 'data_folder' (in config or via CLI).")
+    required_fields = ["data_folder", "method"]
+    for field in required_fields:
+        if field not in merged:
+            logger.critical(f"Missing required field: '{field}'")
+            raise ValueError(f"Missing required field: '{field}'")
 
+     # Validate entries
     entries = merged.get("entries")
     if not isinstance(entries, list) or len(entries) == 0:
         logger.error("Config must include non-empty list field: 'entries'")
@@ -148,9 +200,11 @@ def build_config():
     entries = select_entries(entries, merged.get("datasets", None))
 
     # Optional save merged config
-    if save_path:
-        outp = Path(save_path).expanduser()
-        outp.parent.mkdir(parents=True, exist_ok=True)
+    if merged.get("save_config"):
+        outp = f"{log_dir}/merged_config.json"
+        # Save merged config to specified path  
+        outp = Path(outp).expanduser()  
+        outp.parent.mkdir(parents=True, exist_ok=True)      
         outp.write_text(json.dumps(merged, indent=2), encoding="utf-8")
         logger.info(f"Saved merged config to {outp}")
 
@@ -162,6 +216,13 @@ def build_config():
         if merged["colab"]:
             logger.debug(f"local_data_folder: {merged['local_data_folder']}")
         logger.info(f"entries to process: {[e.get('name') for e in entries]}")
+        logger.debug(f"Using device: {merged['device']}")
+        logger.info(f"method: {merged.get('method')}, backbone: {merged.get('backbone')}, descriptors_dimension: {merged.get('descriptors_dimension')}")    
+        if merged.get('image_size') is not None:
+            logger.info(f"image_size: {merged.get('image_size')}")
+        if merged.get("resume_model") is not None:
+            logger.info(f"resume_model: {merged.get('resume_model')}")
+        
 
     return merged, entries
 
