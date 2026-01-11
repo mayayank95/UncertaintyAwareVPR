@@ -4,3 +4,6 @@
 [submodule "third_party/cosplace_upstream"]
 	path = third_party/cosplace_upstream
 	url = https://github.com/gmberton/CosPlace.git
+[submodule "third_party/cosplace"]
+	path = third_party/cosplace
+	url = https://github.com/gmberton/CosPlace.git
