@@ -87,6 +87,8 @@ def eval(args, model, device, dataset_name):
     logger.debug("Calculating recalls")
     _, predictions = faiss_index.search(queries_descriptors, max(args['recall_values']))
 
+    recalls = None
+    recalls_str = ""
     # For each query, check if the predictions are correct
     if args['use_labels']:
         positives_per_query = test_ds.get_positives()
