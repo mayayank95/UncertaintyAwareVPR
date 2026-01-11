@@ -8,5 +8,9 @@
     { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" },
     { "name": "Pitts30K", "src_rel": "Pitts30K", "dst_rel": "Pitts30K" }
   ],
-  "method": "cosplace"
+  "method": "cosplace",
+  "backbone": "ResNet50",
+  "descriptors_dimension": 512,
+  "positive_dist_threshold": 25,
+  "batch_size": 32
 }

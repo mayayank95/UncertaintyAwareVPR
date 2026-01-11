@@ -76,14 +76,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--save_descriptors",action="store_true", help="set to True if you want to save the descriptors extracted by the model")
     
     # model parameters
-    p.add_argument("--backbone", type=str, default="ResNet18", help="basic backbone model")
-    p.add_argument("--descriptors_dimension", type=int, default=512, help="dimension of the output feature vector")
+    p.add_argument("--backbone", type=str, default=None, help="basic backbone model")
+    p.add_argument("--descriptors_dimension", type=int, default=None, help="dimension of the output feature vector")
     p.add_argument("--resume_model", type=str, default=None, help="model checkpoint to resume training from/evaluate")
     p.add_argument("--method", type=str, default=None, help="model name")
-    p.add_argument("--positive_dist_threshold", type=int, default=25, help="Distance in meters for a prediction to be considered a positive.")
+    p.add_argument("--positive_dist_threshold", type=int, default=None, help="Distance in meters for a prediction to be considered a positive.")
     p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square).")
     p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation.") 
-    p.add_argument("--batch_size", type=int, default=32, help="Batch size for DataLoader.")
+    p.add_argument("--batch_size", type=int, default=None, help="Batch size for DataLoader.")
 
     # system parameters
     p.add_argument("--device", type=str, default="auto", help="Device to use: 'cuda', 'cpu', or 'auto'")
