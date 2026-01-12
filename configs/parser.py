@@ -11,46 +11,6 @@ import torch
 # Create a logger for this module
 logger = logging.getLogger(__name__)
 
-def setup_logging(logs_folder: Optional[str], verbose: bool):
-    """
-    Configures a unified logging system:
-    - Console: Shows clean INFO messages (no clutter).
-    - File: Stores detailed DEBUG logs in a timestamped folder.
-    """
-    # The Root level is the "Master Gatekeeper"
-    root_level = logging.DEBUG if verbose else logging.INFO 
-    
-    # Define handlers list
-    handlers = []
-
-    # 1. Console Handler (The "Screen" output)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)  # Screen stays clean even in verbose mode
-    console_formatter = logging.Formatter("%(levelname)s: %(message)s")
-    console_handler.setFormatter(console_formatter)
-    handlers.append(console_handler)
-
-    if logs_folder:
-        # Create a unique folder for this specific run
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        log_dir = Path(logs_folder) / timestamp
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 2. File Handler (The "Record" output)
-        log_file = log_dir / "main_execution.log"
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(root_level)  # Saves everything allowed by the master gatekeeper
-        file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        file_handler.setFormatter(file_formatter)
-        handlers.append(file_handler)
-
-    # Apply configuration to the global logging system
-    logging.basicConfig(
-        level=root_level,
-        handlers=handlers,
-        force=True  # Ensures this config overrides any defaults
-    )
-    return log_dir     
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Dataset preparation: config-first, CLI overrides.")
@@ -69,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     # - if provided => True
     p.add_argument("--colab", action="store_true", help="Run in Google Colab mode (overrides config).")
     p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations.")
-    p.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
+    p.add_argument("--verbose", action="store_true", help="info/debug level.")
 
     # Optional: save post-merge config
     p.add_argument("--save_config", action="store_true", help="Save merged configuration to logs folder")
@@ -97,6 +57,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_queries_to_save", type=int, default=3, help="Number of queries to save their predictions.")
     p.add_argument("--save_only_wrong_preds", action="store_true", help="If set, only save wrongly predicted queries.") 
 
+    # training parameters
+    p.add_argument("--cudnn_benchmark", action="store_true", 
+                    help="Set torch.backends.cudnn.benchmark to True. Faster, but non-deterministic.")
+    p.add_argument("--lr", type=float, default=0.00001, help="_")
+    p.add_argument("--seed", type=int, default=0, help="_")
+    p.add_argument("--augmentation_device", type=str, default="cuda",
+                        choices=["cuda", "cpu"],
+                        help="on which device to run data augmentation")
+    
+    # CosPlace Groups parameters
+    p.add_argument("--M", type=int, default=10, help="_")
+    p.add_argument("--alpha", type=int, default=30, help="_")
+    p.add_argument("--N", type=int, default=5, help="_")
+    p.add_argument("--L", type=int, default=2, help="_")
+    p.add_argument("--groups_num", type=int, default=8, help="_")
+    p.add_argument("--min_images_per_class", type=int, default=10, help="_")
     return p.parse_args()  
     
 
@@ -151,6 +127,57 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def setup_logging(logs_folder: Optional[str], verbose: bool, dry_run: bool = False):
+    """
+    Configures a unified logging system:
+    - Console: Shows clean INFO messages (no clutter).
+    - File: Stores detailed DEBUG logs in a timestamped folder.
+    """
+    # The Root level is the "Master Gatekeeper"
+    root_level = logging.DEBUG if verbose else logging.INFO 
+    
+    # Define handlers list
+    handlers = []
+
+    # 1. Console Handler (The "Screen" output)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)  # Screen stays clean even in verbose mode
+    console_formatter = logging.Formatter("%(levelname)s: %(message)s")
+    console_handler.setFormatter(console_formatter)
+    handlers.append(console_handler)
+
+    log_dir = None
+    if logs_folder and not dry_run:
+        # Create a unique folder for this specific run
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_dir = Path(logs_folder) / timestamp
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 2. File Handler (The "Record" output)
+        log_file = log_dir / "main_execution.log"
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(root_level)  # Saves everything allowed by the master gatekeeper
+        file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        file_handler.setFormatter(file_formatter)
+        handlers.append(file_handler)
+
+    # Apply configuration to the global logging system
+    logging.basicConfig(
+        level=root_level,
+        handlers=handlers,
+        force=True  # Ensures this config overrides any defaults
+    )
+
+    # Exception Hook
+    # This ensures that if the training crashes, the error is logged to the file
+    def exception_handler(type_, value, tb):
+        logging.error("Uncaught exception", exc_info=(type_, value, tb))
+    
+    sys.excepthook = exception_handler
+
+    return log_dir     
+
+
 def select_entries(entries: List[Dict[str, Any]], datasets: Any) -> List[Dict[str, Any]]:
     """
     Filter entries by 'datasets' selection.
@@ -180,8 +207,8 @@ def build_config():
     merged = normalize(merged)
 
     # Initialize the logging system
-    log_dir = setup_logging(merged.get("logs_folder"), merged.get("verbose", False))
-    merged['logs_folder'] = str(log_dir)  # Ensure logs_folder is set to the actual log_dir used
+    log_dir = setup_logging(merged.get("logs_folder"), merged.get("verbose", False), dry_run=merged.get("dry_run", False))
+    merged['log_dir'] = str(log_dir) if log_dir else None # Ensure logs_folder is set to the actual log_dir used
 
     # REQUIRED config fields
     required_fields = ["data_folder", "method"]

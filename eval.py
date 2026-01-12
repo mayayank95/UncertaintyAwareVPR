@@ -1,4 +1,3 @@
-# import parser
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -10,8 +9,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Subset
 from tqdm import tqdm
 
-# import visualizations
-from utils.test_dataset import TestDataset
+from data.test_dataset import TestDataset
 
 import logging
 from configs.parser import build_config
@@ -29,7 +27,7 @@ def init(args):
     logger.info(
         f"Testing with {args['method']} with a {args['backbone']} backbone and descriptors dimension {args['descriptors_dimension']}"
     )
-    logger.info(f"The outputs are being saved in {args['logs_folder']}")
+    logger.info(f"The outputs are being saved in {args['log_dir']}")
 
     model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'))
     device = torch.device(args["device"])
@@ -75,9 +73,9 @@ def eval(args, model, device, dataset_name):
     database_descriptors = all_descriptors[: test_ds.num_database]
 
     if args['save_descriptors']:
-        logger.info(f"Saving the descriptors in {args['logs_folder']}")
-        np.save(f"{args['logs_folder']}/queries_descriptors.npy", queries_descriptors)
-        np.save(f"{args['logs_folder']}/database_descriptors.npy", database_descriptors)
+        logger.info(f"Saving the descriptors in {args['log_dir']}")
+        np.save(f"{args['log_dir']}/queries_descriptors.npy", queries_descriptors)
+        np.save(f"{args['log_dir']}/database_descriptors.npy", database_descriptors)
 
     # Use a kNN to find predictions
     faiss_index = faiss.IndexFlatL2(args['descriptors_dimension'])
@@ -104,12 +102,16 @@ def eval(args, model, device, dataset_name):
         recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(args['recall_values'], recalls)])
         logger.info(recalls_str)
 
+    if args['dry_run']:
+        logger.info("Dry run, not saving predictions visualizations.")
+        return recalls, recalls_str
+    
     # Save visualizations of predictions
     if args['num_preds_to_save'] != 0:
         logger.info("Saving final predictions")
         # For each query save num_preds_to_save predictions
         visualizations.save_preds(
-            predictions[:, : args['num_preds_to_save']], test_ds, args['logs_folder'], args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save']
+            predictions[:, : args['num_preds_to_save']], test_ds, args['log_dir'], args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save']
         )
     return recalls, recalls_str
 

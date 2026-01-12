@@ -6,47 +6,7 @@ import torch.utils.data as data
 import torchvision.transforms as transforms
 from PIL import Image
 from sklearn.neighbors import NearestNeighbors
-
-
-def read_images_paths(dataset_folder):
-    """Find images within 'dataset_folder'. If the file
-    'dataset_folder'_images_paths.txt exists, read paths from such file.
-    Otherwise, use glob(). Keeping the paths in the file speeds up computation,
-    because using glob over very large folders might be slow.
-
-    Parameters
-    ----------
-    dataset_folder : str, folder containing images
-
-    Returns
-    -------
-    images_paths : list[str], paths of images within dataset_folder
-    """
-
-    if not os.path.exists(dataset_folder):
-        raise FileNotFoundError(f"Folder {dataset_folder} does not exist")
-
-    file_with_paths = dataset_folder + "_images_paths.txt"
-    if os.path.exists(file_with_paths):
-        print(f"Reading paths of images within {dataset_folder} from {file_with_paths}")
-        with open(file_with_paths, "r") as file:
-            images_paths = file.read().splitlines()
-        images_paths = [dataset_folder + "/" + path for path in images_paths]
-        # Sanity check that paths within the file exist
-        if not os.path.exists(images_paths[0]):
-            raise FileNotFoundError(
-                f"Image with path {images_paths[0]} "
-                f"does not exist within {dataset_folder}. It is likely "
-                f"that the content of {file_with_paths} is wrong."
-            )
-    else:
-        print(f"Searching test images in {dataset_folder} with glob()")
-        images_paths = sorted(glob(f"{dataset_folder}/**/*", recursive=True))
-        images_paths = [p for p in images_paths if os.path.isfile(p) and os.path.splitext(p)[1].lower() in [".jpg", ".jpeg", ".png"]]
-        if len(images_paths) == 0:
-            raise FileNotFoundError(f"Directory {dataset_folder} does not contain any images")
-    return images_paths
-
+from data.dataset_utils import read_images_paths
 
 class TestDataset(data.Dataset):
     def __init__(self, database_folder, queries_folder, positive_dist_threshold=25, image_size=None, use_labels=True):
