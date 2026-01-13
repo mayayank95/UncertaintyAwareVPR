@@ -2,15 +2,17 @@
   "data_folder": "/content/drive/MyDrive/Datasets",
   "local_data_folder": "/content/datasets",
   "logs_folder": "/content/drive/MyDrive/Models/CosPlace",
-  "datasets": "st_lucia",
+  "datasets": "sf_xl",
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" },
     { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" },
-    { "name": "Pitts30K", "src_rel": "Pitts30K", "dst_rel": "Pitts30K" }
+    { "name": "Pitts30K", "src_rel": "Pitts30K", "dst_rel": "Pitts30K" },
+    { "name": "amstertime", "src_rel": "amstertime", "dst_rel": "amstertime" }
   ],
   "resume_model": "/content/drive/MyDrive/Models/CosPlace/default/2025-10-27_11-48-39/best_model.pth",
-  "backbone": "ResNet50",
-  "descriptors_dimension": 2048,
+  "method": "cosplace",
+  "backbone": "ResNet18",
+  "descriptors_dimension": 512,
   "positive_dist_threshold": 25,
   "batch_size": 32,
   "drive_logs": "/content/drive/MyDrive/Models/CosPlace"
