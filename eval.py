@@ -34,9 +34,19 @@ def init(args):
     model = model.eval().to(device)
     return device, model
 
-def eval(args, model, device, dataset_name):
-    database_folder = f"{datasetsts_dir[dataset_name]['test']}/database"
-    queries_folder = f"{datasetsts_dir[dataset_name]['test']}/queries"
+def eval_dataset(args, model, device, dataset_name, datasets_dict):
+    """
+    Evaluates the model on a single dataset.
+    Saves heavy outputs (descriptors, images) in a dataset-specific subfolder.
+    Logs all numerical results (Recalls) to the central log file.
+    """
+    # Path for dataset-specific outputs (images, descriptors)
+    dataset_output_dir = Path(args['log_dir']) / dataset_name
+    if not args['dry_run']:
+        dataset_output_dir.mkdir(parents=True, exist_ok=True)
+    # Setup Dataset paths
+    database_folder = f"{datasets_dict[dataset_name]['test']}/database"
+    queries_folder = f"{datasets_dict[dataset_name]['test']}/queries"
 
     test_ds = TestDataset(
         database_folder,
@@ -45,6 +55,7 @@ def eval(args, model, device, dataset_name):
         image_size=args.get('image_size'),
         use_labels=args['use_labels'],
     )
+    logger.info(f"{'='*30}")
     logger.info(f"Testing on {test_ds}")
 
     with torch.inference_mode():
@@ -72,10 +83,11 @@ def eval(args, model, device, dataset_name):
     queries_descriptors = all_descriptors[test_ds.num_database :]
     database_descriptors = all_descriptors[: test_ds.num_database]
 
-    if args['save_descriptors']:
-        logger.info(f"Saving the descriptors in {args['log_dir']}")
-        np.save(f"{args['log_dir']}/queries_descriptors.npy", queries_descriptors)
-        np.save(f"{args['log_dir']}/database_descriptors.npy", database_descriptors)
+    # Save heavy .npy files in the sub-folder
+    if args['save_descriptors'] and not args['dry_run']:
+        logger.info(f"Saving the descriptors in {dataset_output_dir}")
+        np.save(f"{dataset_output_dir}/queries_descriptors.npy", queries_descriptors)
+        np.save(f"{dataset_output_dir}/database_descriptors.npy", database_descriptors)
 
     # Use a kNN to find predictions
     faiss_index = faiss.IndexFlatL2(args['descriptors_dimension'])
@@ -101,26 +113,38 @@ def eval(args, model, device, dataset_name):
         recalls = recalls / test_ds.num_queries * 100
         recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(args['recall_values'], recalls)])
         logger.info(recalls_str)
+        
+        # Save a small text file as a backup in the sub-folder
+        if not args['dry_run']:
+            (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
     if args['dry_run']:
         logger.info("Dry run, not saving predictions visualizations.")
         return recalls, recalls_str
     
     # Save visualizations of predictions
-    if args['num_preds_to_save'] != 0:
-        logger.info("Saving final predictions")
-        # For each query save num_preds_to_save predictions
-        visualizations.save_preds(
-            predictions[:, : args['num_preds_to_save']], test_ds, args['log_dir'], args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save']
-        )
+    if args['num_preds_to_save'] != 0 and not args['dry_run']:
+            logger.info(f"Saving prediction images for {dataset_name} in {dataset_output_dir}")
+            visualizations.save_preds(
+                predictions[:, : args['num_preds_to_save']], 
+                test_ds, 
+                str(dataset_output_dir), 
+                args['save_only_wrong_preds'], 
+                args['use_labels'], 
+                args['num_queries_to_save']
+            )
     return recalls, recalls_str
 
 if __name__ == "__main__":
     # ---- Load and build config ----       
     cfg, entries = build_config()
+    # Upload/Prepare datasets (returns a dict with paths)
     datasetsts_dir = upload_dataset(cfg, entries)
+    # Initialize model and device
     device, model = init(cfg)
+    # Loop through each dataset entry and evaluate
     for e in entries:
         logger.info(f"Evaluating dataset: {e['name']}")
-        eval(cfg, model, device, e["name"])
-    logger.info("Evaluation completed.")
+        eval_dataset(cfg, model, device, e["name"], datasetsts_dir)
+    logger.info("="*30)
+    logger.info("All evaluations completed successfully.")

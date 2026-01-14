@@ -14,6 +14,5 @@
   "backbone": "ResNet18",
   "descriptors_dimension": 512,
   "positive_dist_threshold": 25,
-  "batch_size": 32,
-  "drive_logs": "/content/drive/MyDrive/Models/CosPlace"
+  "batch_size": 32
 }

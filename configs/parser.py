@@ -139,21 +139,20 @@ def setup_logging(logs_folder: Optional[str], verbose: bool, dry_run: bool = Fal
     # Define handlers list
     handlers = []
 
-    # 1. Console Handler (The "Screen" output)
+    # Console Handler (The "Screen" output)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)  # Screen stays clean even in verbose mode
     console_formatter = logging.Formatter("%(levelname)s: %(message)s")
     console_handler.setFormatter(console_formatter)
     handlers.append(console_handler)
 
-    log_dir = None
-    if logs_folder and not dry_run:
-        # Create a unique folder for this specific run
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        log_dir = Path(logs_folder) / timestamp
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 2. File Handler (The "Record" output)
+    # Create a unique folder for this specific run
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_dir = Path(logs_folder) / timestamp
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    if logs_folder and not dry_run:    
+        # File Handler (The "Record" output)
         log_file = log_dir / "main_execution.log"
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
         file_handler.setLevel(root_level)  # Saves everything allowed by the master gatekeeper
