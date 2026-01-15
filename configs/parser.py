@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--positive_dist_threshold", type=int, default=None, help="Distance in meters for a prediction to be considered a positive.")
     p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square).")
     p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation.") 
+    p.add_argument("--train_all_layers", action="store_true", help="If true, train all layers of the backbone")
 
 
     # system parameters
@@ -52,7 +53,8 @@ def parse_args() -> argparse.Namespace:
     
     # evaluation parameters
     p.add_argument("--recall_values", type=int, nargs="+", default=[1, 5, 10, 20], help="Recall values to compute during evaluation.")
-
+    p.add_argument("--infer_batch_size", type=int, default=16, help="Batch size for inference (validating and testing)")
+  
     # visualization parameters
     p.add_argument("--num_preds_to_save", type=int, default=3, help="Number of predictions to save per query.")
     p.add_argument("--num_queries_to_save", type=int, default=3, help="Number of queries to save their predictions.")

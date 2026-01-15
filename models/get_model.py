@@ -4,9 +4,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_model(method, backbone=None, descriptors_dimension=None, resume_model=None):
+def get_model(method, backbone=None, descriptors_dimension=None, resume_model=None, train_all_layers=False):
     if method == "cosplace":
-        model = cosplace_network.GeoLocalizationNet(backbone, descriptors_dimension)
+        model = cosplace_network.GeoLocalizationNet(backbone, descriptors_dimension, train_all_layers)
     elif method == "cosplace_pretrained":
         model = torch.hub.load("gmberton/cosplace", "get_trained_model", backbone, descriptors_dimension)
     if resume_model is not None:

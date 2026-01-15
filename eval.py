@@ -62,7 +62,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         logger.debug("Extracting database descriptors for evaluation/testing")
         database_subset_ds = Subset(test_ds, list(range(test_ds.num_database)))
         database_dataloader = DataLoader(
-            dataset=database_subset_ds, num_workers=args['num_workers'], batch_size=args['batch_size']
+            dataset=database_subset_ds, num_workers=args['num_workers'], batch_size=args['infer_batch_size'], pin_memory=(device == "cuda")
         )
         all_descriptors = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
         for images, indices in tqdm(database_dataloader):
@@ -76,7 +76,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         queries_subset_ds = Subset(
             test_ds, list(range(test_ds.num_database, test_ds.num_database + test_ds.num_queries))
         )
-        queries_dataloader = DataLoader(dataset=queries_subset_ds, num_workers=args['num_workers'], batch_size=1)
+        queries_dataloader = DataLoader(dataset=queries_subset_ds, num_workers=args['num_workers'], batch_size=1, pin_memory=(args.device == "cuda"))
         for images, indices in tqdm(queries_dataloader):
             descriptors = model(images.to(device))
             descriptors = descriptors.cpu().numpy()

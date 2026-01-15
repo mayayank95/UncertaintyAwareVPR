@@ -32,13 +32,12 @@ def init(args):
     )
     logger.info(f"The outputs are being saved in {args['log_dir']}")
 
-    model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'))
+    model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'), args.get('train_all_layers', False))
     device = torch.device(args["device"])
     model = model.to(device) 
     model.train()
     return device, model
 
-    val_set_folder = f"{datasetsts_dir[dataset_name]['validation']}"
 def train(args, model, device, dataset_name, datasetsts_dir):
     start_time = datetime.now()
     commons.make_deterministic(args['seed'])
@@ -163,7 +162,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                     f"loss = {epoch_losses.mean():.4f}")
         
         #### Evaluation
-        recalls, recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)#test.test(args, val_ds, model)
+        recalls, recalls_str = test.test(args, val_ds, model)#eval_dataset(args, model, device, dataset_name, val_set_folder)#
         logging.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {val_ds}: {recalls_str[:20]}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
