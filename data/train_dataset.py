@@ -1,5 +1,6 @@
 
 import os
+from pyparsing import Path
 import torch
 import random
 import logging
@@ -16,7 +17,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class TrainDataset(torch.utils.data.Dataset):
-    def __init__(self, args, dataset_folder, M=10, alpha=30, N=5, L=2,
+    def __init__(self, dataset_name, args, dataset_folder, M=10, alpha=30, N=5, L=2,
                  current_group=0, min_images_per_class=10):
         """
         Parameters (please check our paper for a clearer explanation of the parameters).
@@ -39,9 +40,9 @@ class TrainDataset(torch.utils.data.Dataset):
         self.dataset_folder = dataset_folder
         self.augmentation_device = args['augmentation_device']
         
-        # dataset_name should be either "processed", "small" or "raw", if you're using SF-XL
-        dataset_name = os.path.basename(os.path.dirname(dataset_folder))
-        filename = f"{args['log_dir']}/cache/{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch"
+        # Path for dataset-specific outputs (images, descriptors)
+        dataset_output_dir = Path(args['log_dir']) / dataset_name
+        filename = f"{dataset_output_dir}/cache/{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch"
         if not os.path.exists(filename):
             logging.info(f"Cached dataset {filename} does not exist, I'll create it now.")
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -49,6 +50,9 @@ class TrainDataset(torch.utils.data.Dataset):
         elif current_group == 0:
             logging.info(f"Using cached dataset {filename}")
         
+        # Load the pre-computed geographic clusters: 
+        # classes_per_group: List of groups, each containing distant class IDs.
+        # images_per_class: Dict mapping each class ID to its list of image paths.
         classes_per_group, self.images_per_class = torch.load(filename)
         if current_group >= len(classes_per_group):
             raise ValueError(f"With this configuration there are only {len(classes_per_group)} " +
@@ -141,6 +145,7 @@ class TrainDataset(torch.utils.data.Dataset):
         # Each sublist represents the classes within a group.
         classes_per_group = [list(c) for c in classes_per_group.values()]
         
+        logging.debug(f"Loaded {len(classes_per_group)} groups and {len(images_per_class)} total classes.")
         torch.save((classes_per_group, images_per_class), filename)
     
     @staticmethod

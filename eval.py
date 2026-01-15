@@ -34,7 +34,7 @@ def init(args):
     model = model.eval().to(device)
     return device, model
 
-def eval_dataset(args, model, device, dataset_name, datasets_dict):
+def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     """
     Evaluates the model on a single dataset.
     Saves heavy outputs (descriptors, images) in a dataset-specific subfolder.
@@ -45,8 +45,8 @@ def eval_dataset(args, model, device, dataset_name, datasets_dict):
     if not args['dry_run']:
         dataset_output_dir.mkdir(parents=True, exist_ok=True)
     # Setup Dataset paths
-    database_folder = f"{datasets_dict[dataset_name]['test']}/database"
-    queries_folder = f"{datasets_dict[dataset_name]['test']}/queries"
+    database_folder = f"{eval_ds_path}/database"
+    queries_folder = f"{eval_ds_path}/queries"
 
     test_ds = TestDataset(
         database_folder,
@@ -69,6 +69,8 @@ def eval_dataset(args, model, device, dataset_name, datasets_dict):
             descriptors = model(images.to(device))
             descriptors = descriptors.cpu().numpy()
             all_descriptors[indices.numpy(), :] = descriptors
+            if args["dry_run"]:
+                break
 
         logger.debug("Extracting queries descriptors for evaluation/testing using batch size 1")
         queries_subset_ds = Subset(
@@ -79,6 +81,8 @@ def eval_dataset(args, model, device, dataset_name, datasets_dict):
             descriptors = model(images.to(device))
             descriptors = descriptors.cpu().numpy()
             all_descriptors[indices.numpy(), :] = descriptors
+            if args["dry_run"]:
+                break
 
     queries_descriptors = all_descriptors[test_ds.num_database :]
     database_descriptors = all_descriptors[: test_ds.num_database]
@@ -145,6 +149,6 @@ if __name__ == "__main__":
     # Loop through each dataset entry and evaluate
     for e in entries:
         logger.info(f"Evaluating dataset: {e['name']}")
-        eval_dataset(cfg, model, device, e["name"], datasetsts_dir)
+        eval_dataset(cfg, model, device, e["name"], datasetsts_dir[e["name"]]['test'])
     logger.info("="*30)
     logger.info("All evaluations completed successfully.")

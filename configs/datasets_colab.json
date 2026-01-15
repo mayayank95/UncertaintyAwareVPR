@@ -13,5 +13,6 @@
   "backbone": "ResNet18",
   "descriptors_dimension": 512,
   "positive_dist_threshold": 25,
-  "batch_size": 32
+  "batch_size": 32,
+  "image_size": 512
 }

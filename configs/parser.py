@@ -43,12 +43,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--positive_dist_threshold", type=int, default=None, help="Distance in meters for a prediction to be considered a positive.")
     p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square).")
     p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation.") 
-    p.add_argument("--batch_size", type=int, default=None, help="Batch size for DataLoader.")
+
 
     # system parameters
     p.add_argument("--device", type=str, default="auto", help="Device to use: 'cuda', 'cpu', or 'auto'")
     p.add_argument("--num_workers", type=int, default=2, help="Number of DataLoader workers")
-
+    p.add_argument("--use_amp16", action="store_true", help="use Automatic Mixed Precision")
+    
     # evaluation parameters
     p.add_argument("--recall_values", type=int, nargs="+", default=[1, 5, 10, 20], help="Recall values to compute during evaluation.")
 
@@ -62,10 +63,19 @@ def parse_args() -> argparse.Namespace:
                     help="Set torch.backends.cudnn.benchmark to True. Faster, but non-deterministic.")
     p.add_argument("--lr", type=float, default=0.00001, help="_")
     p.add_argument("--seed", type=int, default=0, help="_")
-    p.add_argument("--augmentation_device", type=str, default="cuda",
-                        choices=["cuda", "cpu"],
-                        help="on which device to run data augmentation")
-    
+    p.add_argument("--classifiers_lr", type=float, default=0.01, help="_")
+    p.add_argument("--batch_size", type=int, default=None, help="Batch size for DataLoader.")
+    p.add_argument("--iterations_per_epoch", type=int, default=10000, help="_")
+    p.add_argument("--epochs_num", type=int, default=50, help="_")
+
+    # Data augmentation
+    p.add_argument("--augmentation_device", type=str, default="cuda", choices=["cuda", "cpu"], help="on which device to run data augmentation")
+    p.add_argument("--brightness", type=float, default=0.7, help="_")
+    p.add_argument("--contrast", type=float, default=0.7, help="_")
+    p.add_argument("--hue", type=float, default=0.5, help="_")
+    p.add_argument("--saturation", type=float, default=0.7, help="_")
+    p.add_argument("--random_resized_crop", type=float, default=0.5, help="_")
+
     # CosPlace Groups parameters
     p.add_argument("--M", type=int, default=10, help="_")
     p.add_argument("--alpha", type=int, default=30, help="_")

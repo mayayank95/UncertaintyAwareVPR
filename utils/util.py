@@ -4,7 +4,7 @@ import shutil
 import logging
 from typing import Type, List
 from argparse import Namespace
-from cosface_loss import MarginCosineProduct
+from losses.cosface_loss import MarginCosineProduct
 
 
 def move_to_device(optimizer: Type[torch.optim.Optimizer], device: str):

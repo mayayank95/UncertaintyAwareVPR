@@ -1,5 +1,4 @@
 
-from multiprocessing import util
 import sys
 import torch
 import logging
@@ -15,17 +14,11 @@ from configs.parser import build_config
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
 from data.upload_dataset import upload_dataset
+from eval import eval_dataset
 from models.get_model import get_model
 from losses import cosface_loss
-from utils import augmentations, commons
-# import util
-# import parser
-# import commons
-# import cosface_loss
-# import augmentations
-# from cosplace_model import cosplace_network
-# from datasets.test_dataset import TestDataset
-# from datasets.train_dataset import TrainDataset
+from utils import augmentations, commons, util
+
 
 # Define the logger for this module
 # It will inherit the configuration set in setup_logging within parser.py
@@ -45,7 +38,8 @@ def init(args):
     model.train()
     return device, model
 
-def train(args, model, device, dataset_name):
+    val_set_folder = f"{datasetsts_dir[dataset_name]['validation']}"
+def train(args, model, device, dataset_name, datasetsts_dir):
     start_time = datetime.now()
     commons.make_deterministic(args['seed'])
     # Handle the cuDNN Benchmark speed/reproducibility trade-off
@@ -69,21 +63,21 @@ def train(args, model, device, dataset_name):
     val_set_folder = f"{datasetsts_dir[dataset_name]['validation']}"
 
     #### Datasets
-    groups = [TrainDataset(args, train_set_folder, M=args['M'], alpha=args['alpha'], N=args['N'], L=args['L'],
+    groups = [TrainDataset(dataset_name, args, train_set_folder, M=args['M'], alpha=args['alpha'], N=args['N'], L=args['L'],
                         current_group=n, min_images_per_class=args['min_images_per_class']) for n in range(args['groups_num'])]
     # Each group has its own classifier, which depends on the number of classes in the group
-    classifiers = [cosface_loss.MarginCosineProduct(args['fc_output_dim'], len(group)) for group in groups]
+    classifiers = [cosface_loss.MarginCosineProduct(args['descriptors_dimension'], len(group)) for group in groups]
     classifiers_optimizers = [torch.optim.Adam(classifier.parameters(), lr=args['classifiers_lr']) for classifier in classifiers]
 
     logging.info(f"Using {len(groups)} groups")
     logging.info(f"The {len(groups)} groups have respectively the following number of classes {[len(g) for g in groups]}")
     logging.info(f"The {len(groups)} groups have respectively the following number of images {[g.get_images_num() for g in groups]}")
 
-    val_ds = TestDataset(f"{val_set_folder}/database", f"{val_set_folder}/queries", args['positive_dist_threshold'], args['image_size'], use_labels=True)  
+    val_ds = TestDataset(f"{val_set_folder}/database", f"{val_set_folder}/queries", args['positive_dist_threshold'], args.get('image_size'), use_labels=True)  
     logging.info(f"Validation set: {val_ds}")
 
     #### Resume
-    if args['resume_train']:
+    if args.get('resume_train') is not None:
         model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num = \
             util.resume_train(args, args['output_folder'], model, model_optimizer, classifiers, classifiers_optimizers)
         model = model.to(args['device'])
@@ -120,12 +114,12 @@ def train(args, model, device, dataset_name):
         epoch_start_time = datetime.now()
         # Select classifier and dataloader according to epoch
         current_group_num = epoch_num % args['groups_num']
-        classifiers[current_group_num] = classifiers[current_group_num].to(args['device'])
-        util.move_to_device(classifiers_optimizers[current_group_num], args['device'])
-        
+        classifiers[current_group_num] = classifiers[current_group_num].to(device)
+        util.move_to_device(classifiers_optimizers[current_group_num], device)
+
         dataloader = commons.InfiniteDataLoader(groups[current_group_num], num_workers=args['num_workers'],
                                                 batch_size=args['batch_size'], shuffle=True,
-                                                pin_memory=(args['device'] == "cuda"), drop_last=True)
+                                                pin_memory=(device == "cuda"), drop_last=True)
 
         dataloader_iterator = iter(dataloader)
         model = model.train()
@@ -133,7 +127,7 @@ def train(args, model, device, dataset_name):
         epoch_losses = np.zeros((0, 1), dtype=np.float32)
         for iteration in tqdm(range(args['iterations_per_epoch']), ncols=100):
             images, targets, _ = next(dataloader_iterator)
-            images, targets = images.to(args['device']), targets.to(args['device'])
+            images, targets = images.to(device), targets.to(device)
             
             if args['augmentation_device']  == "cuda":
                 images = gpu_augmentation(images)
@@ -169,7 +163,7 @@ def train(args, model, device, dataset_name):
                     f"loss = {epoch_losses.mean():.4f}")
         
         #### Evaluation
-        recalls, recalls_str = test.test(args, val_ds, model)
+        recalls, recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)#test.test(args, val_ds, model)
         logging.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {val_ds}: {recalls_str[:20]}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
@@ -181,7 +175,7 @@ def train(args, model, device, dataset_name):
             "classifiers_state_dict": [c.state_dict() for c in classifiers],
             "optimizers_state_dict": [c.state_dict() for c in classifiers_optimizers],
             "best_val_recall1": best_val_recall1
-        }, is_best, args['output_folder'])
+        }, is_best, args['log_dir'])
 
     logging.info(f"Trained for {epoch_num+1:02d} epochs, in total in {str(datetime.now() - start_time)[:-7]}")
     logging.info("Experiment finished (without any errors)")
@@ -193,5 +187,5 @@ if __name__ == "__main__":
     device, model = init(cfg)
     for e in entries:
         logger.info(f"Training dataset: {e['name']}")
-        train(cfg, model, device, e["name"])
+        train(cfg, model, device, e["name"], datasetsts_dir)
     logger.info("Training completed.")
