@@ -44,7 +44,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square).")
     p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation.") 
     p.add_argument("--train_all_layers", action="store_true", help="If true, train all layers of the backbone")
-
+    p.add_argument("--resize_test_imgs", action="store_true", help="If the test images should be resized to image_size along the shorter side while maintaining aspect ratio")
+    
 
     # system parameters
     p.add_argument("--device", type=str, default="auto", help="Device to use: 'cuda', 'cpu', or 'auto'")

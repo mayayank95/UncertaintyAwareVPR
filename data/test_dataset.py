@@ -9,7 +9,7 @@ from sklearn.neighbors import NearestNeighbors
 from data.dataset_utils import read_images_paths
 
 class TestDataset(data.Dataset):
-    def __init__(self, database_folder, queries_folder, positive_dist_threshold=25, image_size=None, use_labels=True):
+    def __init__(self, database_folder, queries_folder, positive_dist_threshold=25, image_size=None, use_labels=True, resize_test_imgs=False):
         """Dataset with images from database and queries, used for validation and test.
         Parameters
         ----------
@@ -60,7 +60,7 @@ class TestDataset(data.Dataset):
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
-        if image_size:
+        if resize_test_imgs:
             transformations.append(transforms.Resize(size=image_size, antialias=True))
         self.transform = transforms.Compose(transformations)
 
