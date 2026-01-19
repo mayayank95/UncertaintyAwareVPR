@@ -63,7 +63,7 @@ def test(device, args: Namespace, eval_ds: Dataset, model: torch.nn.Module,
                 break
     
     # Divide by queries_num and multiply by 100, so the recalls are in percentages
-    recalls = recalls / eval_ds.queries_num * 100
+    recalls = recalls / eval_ds.num_queries * 100
     recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(RECALL_VALUES, recalls)])
     
     # Save visualizations of predictions
