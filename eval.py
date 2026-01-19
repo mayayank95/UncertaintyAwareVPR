@@ -76,7 +76,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         queries_subset_ds = Subset(
             test_ds, list(range(test_ds.num_database, test_ds.num_database + test_ds.num_queries))
         )
-        queries_dataloader = DataLoader(dataset=queries_subset_ds, num_workers=args['num_workers'], batch_size=1, pin_memory=(args.device == "cuda"))
+        queries_dataloader = DataLoader(dataset=queries_subset_ds, num_workers=args['num_workers'], batch_size=1, pin_memory=(device == "cuda"))
         for images, indices in tqdm(queries_dataloader):
             descriptors = model(images.to(device))
             descriptors = descriptors.cpu().numpy()
