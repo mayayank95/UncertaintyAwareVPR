@@ -31,7 +31,6 @@ def init(args):
 
     model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'))
     device = torch.device(args["device"])
-    model = model.eval().to(device)
     return device, model
 
 def eval_dataset(args, model, device, dataset_name, eval_ds_path):
@@ -40,6 +39,9 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     Saves heavy outputs (descriptors, images) in a dataset-specific subfolder.
     Logs all numerical results (Recalls) to the central log file.
     """
+    
+    model = model.eval().to(device)
+
     # Path for dataset-specific outputs (images, descriptors)
     dataset_output_dir = Path(args['log_dir']) / dataset_name
     if not args['dry_run']:

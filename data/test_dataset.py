@@ -56,12 +56,13 @@ class TestDataset(data.Dataset):
                 self.queries_utms, radius=positive_dist_threshold, return_distance=False
             )
 
+        transformations = []
+        if resize_test_imgs:
+            transformations.append(transforms.Resize(size=image_size, antialias=True))
         transformations = [
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
-        if resize_test_imgs:
-            transformations.append(transforms.Resize(size=image_size, antialias=True))
         self.transform = transforms.Compose(transformations)
 
     def __getitem__(self, index):

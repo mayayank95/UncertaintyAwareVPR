@@ -109,60 +109,60 @@ def train(args, model, device, dataset_name, datasetsts_dir):
 
     for epoch_num in range(start_epoch_num, args['epochs_num']):
         
-        #### Train
-        epoch_start_time = datetime.now()
-        # Select classifier and dataloader according to epoch
-        current_group_num = epoch_num % args['groups_num']
-        classifiers[current_group_num] = classifiers[current_group_num].to(device)
-        util.move_to_device(classifiers_optimizers[current_group_num], device)
+        # #### Train
+        # epoch_start_time = datetime.now()
+        # # Select classifier and dataloader according to epoch
+        # current_group_num = epoch_num % args['groups_num']
+        # classifiers[current_group_num] = classifiers[current_group_num].to(device)
+        # util.move_to_device(classifiers_optimizers[current_group_num], device)
 
-        dataloader = commons.InfiniteDataLoader(groups[current_group_num], num_workers=args['num_workers'],
-                                                batch_size=args['batch_size'], shuffle=True,
-                                                pin_memory=(device == "cuda"), drop_last=True)
+        # dataloader = commons.InfiniteDataLoader(groups[current_group_num], num_workers=args['num_workers'],
+        #                                         batch_size=args['batch_size'], shuffle=True,
+        #                                         pin_memory=(device == "cuda"), drop_last=True)
 
-        dataloader_iterator = iter(dataloader)
-        model = model.train()
+        # dataloader_iterator = iter(dataloader)
+        # model = model.train()
         
-        epoch_losses = np.zeros((0, 1), dtype=np.float32)
-        for iteration in tqdm(range(args['iterations_per_epoch']), ncols=100):
-            images, targets, _ = next(dataloader_iterator)
-            images, targets = images.to(device), targets.to(device)
+        # epoch_losses = np.zeros((0, 1), dtype=np.float32)
+        # for iteration in tqdm(range(args['iterations_per_epoch']), ncols=100):
+        #     images, targets, _ = next(dataloader_iterator)
+        #     images, targets = images.to(device), targets.to(device)
             
-            if args['augmentation_device']  == "cuda":
-                images = gpu_augmentation(images)
+        #     if args['augmentation_device']  == "cuda":
+        #         images = gpu_augmentation(images)
             
-            model_optimizer.zero_grad()
-            classifiers_optimizers[current_group_num].zero_grad()
+        #     model_optimizer.zero_grad()
+        #     classifiers_optimizers[current_group_num].zero_grad()
             
-            if not args['use_amp16']:
-                descriptors = model(images)
-                output = classifiers[current_group_num](descriptors, targets)
-                loss = criterion(output, targets)
-                loss.backward()
-                epoch_losses = np.append(epoch_losses, loss.item())
-                del loss, output, images
-                model_optimizer.step()
-                classifiers_optimizers[current_group_num].step()
-            else:  # Use AMP 16
-                with torch.amp.autocast("cuda"):
-                    descriptors = model(images)
-                    output = classifiers[current_group_num](descriptors, targets)
-                    loss = criterion(output, targets)
-                scaler.scale(loss).backward()
-                epoch_losses = np.append(epoch_losses, loss.item())
-                del loss, output, images
-                scaler.step(model_optimizer)
-                scaler.step(classifiers_optimizers[current_group_num])
-                scaler.update()
+        #     if not args['use_amp16']:
+        #         descriptors = model(images)
+        #         output = classifiers[current_group_num](descriptors, targets)
+        #         loss = criterion(output, targets)
+        #         loss.backward()
+        #         epoch_losses = np.append(epoch_losses, loss.item())
+        #         del loss, output, images
+        #         model_optimizer.step()
+        #         classifiers_optimizers[current_group_num].step()
+        #     else:  # Use AMP 16
+        #         with torch.amp.autocast("cuda"):
+        #             descriptors = model(images)
+        #             output = classifiers[current_group_num](descriptors, targets)
+        #             loss = criterion(output, targets)
+        #         scaler.scale(loss).backward()
+        #         epoch_losses = np.append(epoch_losses, loss.item())
+        #         del loss, output, images
+        #         scaler.step(model_optimizer)
+        #         scaler.step(classifiers_optimizers[current_group_num])
+        #         scaler.update()
         
-        classifiers[current_group_num] = classifiers[current_group_num].cpu()
-        util.move_to_device(classifiers_optimizers[current_group_num], "cpu")
+        # classifiers[current_group_num] = classifiers[current_group_num].cpu()
+        # util.move_to_device(classifiers_optimizers[current_group_num], "cpu")
         
-        logging.debug(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
-                    f"loss = {epoch_losses.mean():.4f}")
+        # logging.debug(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
+        #             f"loss = {epoch_losses.mean():.4f}")
         
         #### Evaluation
-        recalls, recalls_str = test.test(device,args, val_ds, model)#eval_dataset(args, model, device, dataset_name, val_set_folder)#
+        recalls, recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)#test.test(device,args, val_ds, model)#
         logging.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {val_ds}: {recalls_str[:20]}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
