@@ -39,7 +39,6 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     Saves heavy outputs (descriptors, images) in a dataset-specific subfolder.
     Logs all numerical results (Recalls) to the central log file.
     """
-    
     model = model.eval().to(device)
 
     # Path for dataset-specific outputs (images, descriptors)
@@ -118,10 +117,10 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         # Divide by num_queries and multiply by 100, so the recalls are in percentages
         recalls = recalls / test_ds.num_queries * 100
         recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(args['recall_values'], recalls)])
-        logger.info(recalls_str)
+        #logger.info(recalls_str)
         
         # Save a small text file as a backup in the sub-folder
-        if not args['dry_run']:
+        if not args['dry_run'] and args['datasets_type'] == 'test':
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
     if args['dry_run']:
@@ -151,6 +150,7 @@ if __name__ == "__main__":
     # Loop through each dataset entry and evaluate
     for e in entries:
         logger.info(f"Evaluating dataset: {e['name']}")
-        eval_dataset(cfg, model, device, e["name"], datasetsts_dir[e["name"]]['test'])
+        recalls, recalls_str = eval_dataset(cfg, model, device, e["name"], datasetsts_dir[e["name"]]['test'])
+        logger.info(recalls_str)
     logger.info("="*30)
     logger.info("All evaluations completed successfully.")

@@ -140,54 +140,76 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+import logging
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
 def setup_logging(logs_folder: Optional[str], verbose: bool, dry_run: bool = False):
     """
     Configures a unified logging system:
-    - Console: Shows clean INFO messages (no clutter).
-    - File: Stores detailed DEBUG logs in a timestamped folder.
+    - Console: Shows clean INFO messages.
+    - info.log: Stores clean INFO level logs and above.
+    - debug.log: Stores detailed DEBUG logs (the full technical record).
     """
-    # The Root level is the "Master Gatekeeper"
+    
+    # Root level acts as the master gatekeeper
     root_level = logging.DEBUG if verbose else logging.INFO 
     
-    # Define handlers list
     handlers = []
 
-    # Console Handler (The "Screen" output)
+    # 1. Console Handler - Keep the terminal output clean and readable
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)  # Screen stays clean even in verbose mode
-    console_formatter = logging.Formatter("%(levelname)s: %(message)s")
+    console_handler.setLevel(logging.INFO)  
+    # Adding short timestamp to console for real-time tracking
+    console_formatter = logging.Formatter("%(asctime)s - %(levelname)s: %(message)s", "%H:%M:%S")
     console_handler.setFormatter(console_formatter)
     handlers.append(console_handler)
 
-    # Create a unique folder for this specific run
+    log_dir = None
+    # Create a unique timestamped folder for this specific run
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = Path(logs_folder) / timestamp
-    log_dir.mkdir(parents=True, exist_ok=True)
-    
-    if logs_folder and not dry_run:    
-        # File Handler (The "Record" output)
-        log_file = log_dir / "main_execution.log"
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(root_level)  # Saves everything allowed by the master gatekeeper
-        file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        file_handler.setFormatter(file_formatter)
-        handlers.append(file_handler)
+    if logs_folder and not dry_run:
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        # Detailed formatter for files (includes full date and time)
+        file_formatter = logging.Formatter(
+            fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+
+        # 2. Debug File Handler - Captures everything (The "Black Box" of the run)
+        debug_file = log_dir / "debug.log"
+        debug_handler = logging.FileHandler(debug_file, encoding="utf-8")
+        debug_handler.setLevel(logging.DEBUG)
+        debug_handler.setFormatter(file_formatter)
+        handlers.append(debug_handler)
+
+        # 3. Info File Handler - Captures only high-level progress
+        info_file = log_dir / "info.log"
+        info_handler = logging.FileHandler(info_file, encoding="utf-8")
+        info_handler.setLevel(logging.INFO)
+        info_handler.setFormatter(file_formatter)
+        handlers.append(info_handler)
 
     # Apply configuration to the global logging system
     logging.basicConfig(
         level=root_level,
         handlers=handlers,
-        force=True  # Ensures this config overrides any defaults
+        force=True  # Overrides any existing logging configuration
     )
 
     # Exception Hook
-    # This ensures that if the training crashes, the error is logged to the file
+    # Ensures that if the script crashes, the traceback is captured in the log files
     def exception_handler(type_, value, tb):
-        logging.error("Uncaught exception", exc_info=(type_, value, tb))
+        logging.error("Uncaught exception occurred:", exc_info=(type_, value, tb))
+        logging.info("Execution finished with errors.")
     
     sys.excepthook = exception_handler
 
-    return log_dir     
+    return log_dir 
 
 
 def select_entries(entries: List[Dict[str, Any]], datasets: Any) -> List[Dict[str, Any]]:

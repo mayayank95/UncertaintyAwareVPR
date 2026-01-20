@@ -41,8 +41,11 @@ class TrainDataset(torch.utils.data.Dataset):
         self.augmentation_device = args['augmentation_device']
         
         # Path for dataset-specific outputs (images, descriptors)
-        dataset_output_dir = Path(args['log_dir']) / dataset_name
-        filename = f"{dataset_output_dir}/cache/{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch"
+        # dataset_output_dir = Path(args['log_dir']) / dataset_name
+        # filename = f"{dataset_output_dir}/cache/{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch"
+        dataset_name = os.path.basename(dataset_folder) 
+        cache_dir = os.path.join(args['log_dir'], dataset_name, "cache")
+        filename = os.path.join(cache_dir, f"{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch")
         if not os.path.exists(filename):
             logging.info(f"Cached dataset {filename} does not exist, I'll create it now.")
             os.makedirs(os.path.dirname(filename), exist_ok=True)

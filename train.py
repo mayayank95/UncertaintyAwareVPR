@@ -23,6 +23,7 @@ from utils import augmentations, commons, util
 # Define the logger for this module
 # It will inherit the configuration set in setup_logging within parser.py
 logger = logging.getLogger(__name__)
+torch.backends.cudnn.benchmark = True  # Provides a speedup
 
 def init(args):
     logger.info(" ".join(sys.argv))
@@ -123,7 +124,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         dataloader_iterator = iter(dataloader)
         model = model.train()
         
-        epoch_losses = np.zeros((0, 1), dtype=np.float32)
+        epoch_losses = []#np.zeros((0, 1), dtype=np.float32)
         for iteration in tqdm(range(args['iterations_per_epoch']), ncols=100):
             images, targets, _ = next(dataloader_iterator)
             images, targets = images.to(device), targets.to(device)
@@ -139,7 +140,8 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                 output = classifiers[current_group_num](descriptors, targets)
                 loss = criterion(output, targets)
                 loss.backward()
-                epoch_losses = np.append(epoch_losses, loss.item())
+                # epoch_losses = np.append(epoch_losses, loss.item())
+                epoch_losses.append(loss.item())
                 del loss, output, images
                 model_optimizer.step()
                 classifiers_optimizers[current_group_num].step()
@@ -149,7 +151,8 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                     output = classifiers[current_group_num](descriptors, targets)
                     loss = criterion(output, targets)
                 scaler.scale(loss).backward()
-                epoch_losses = np.append(epoch_losses, loss.item())
+                # epoch_losses = np.append(epoch_losses, loss.item())
+                epoch_losses.append(loss.item())
                 del loss, output, images
                 scaler.step(model_optimizer)
                 scaler.step(classifiers_optimizers[current_group_num])
@@ -158,8 +161,10 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         classifiers[current_group_num] = classifiers[current_group_num].cpu()
         util.move_to_device(classifiers_optimizers[current_group_num], "cpu")
         
+        # logging.debug(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
+        #             f"loss = {epoch_losses.mean():.4f}")
         logging.debug(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
-                    f"loss = {epoch_losses.mean():.4f}")
+                    f"loss = {np.mean(epoch_losses):.4f}")
         
         #### Evaluation
         recalls, recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)#test.test(device,args, val_ds, model)#
