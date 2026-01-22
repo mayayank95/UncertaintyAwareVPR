@@ -24,6 +24,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--datasets", type=str, default=None, help='Datasets to process (e.g. "all", "sf_xl", or "sf_xl,pitts30k")')
     p.add_argument("--datasets_type", type=str, default="all", help='Datasets type to upload(e.g. "all", "train", or "test", "val")')
 
+    # Resume parameters
+    # p.add_argument("--resume_train", type=str, default=None,
+    #                     help="path to checkpoint to resume, e.g. logs/.../last_checkpoint.pth")
+    # p.add_argument("--resume_model", type=str, default=None,
+    #                     help="path to model to resume, e.g. logs/.../best_model.pth")
+                        
     # IMPORTANT: tri-state booleans so config merging works:
     # - if not provided => False
     # - if provided => True
@@ -86,6 +92,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--L", type=int, default=2, help="_")
     p.add_argument("--groups_num", type=int, default=8, help="_")
     p.add_argument("--min_images_per_class", type=int, default=10, help="_")
+
+    # uncertainty parameters
+    p.add_argument("--model_mode", type=str, default=None, help="model mode: basic/uncertainty")
+    p.add_argument("--sigma_dim", type=int, default=None, help="dimension of the output uncertainty vector (variance)")
     return p.parse_args()  
     
 

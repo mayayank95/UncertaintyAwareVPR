@@ -5,6 +5,7 @@ from torch import nn
 from typing import Tuple
 
 from models.cosplace_uncertainty.cosplace_model.layers import Flatten, L2Norm, GeM
+#from cosplace_model.layers import Flatten, L2Norm, GeM
 
 # The number of channels in the last convolutional layer, the one before average pooling
 CHANNELS_NUM_IN_LAST_CONV = {
@@ -25,7 +26,7 @@ CHANNELS_NUM_IN_LAST_CONV = {
 
 
 class GeoLocalizationNet(nn.Module):
-    def __init__(self, backbone : str, fc_output_dim : int, train_all_layers : bool = False):
+    def __init__(self, backbone : str, fc_output_dim : int, train_all_layers : bool = False, uncertainty_mode: bool = False):
         """Return a model for GeoLocalization.
         
         Args:
@@ -40,10 +41,13 @@ class GeoLocalizationNet(nn.Module):
             L2Norm(),
             GeM(),
             Flatten(),
-            nn.Linear(features_dim, fc_output_dim),
-            L2Norm()
+            nn.Linear(features_dim, fc_output_dim)#,
+            #L2Norm()
         )
     
+        if not uncertainty_mode:
+            self.aggregation.add_module("final_l2", L2Norm())
+
     def forward(self, x):
         x = self.backbone(x)
         x = self.aggregation(x)

@@ -33,7 +33,8 @@ def init(args):
     )
     logger.info(f"The outputs are being saved in {args['log_dir']}")
 
-    model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'), args.get('train_all_layers', False))
+    #model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'), args.get('train_all_layers', False))
+    model = get_model(args)
     device = torch.device(args["device"])
     model = model.to(device) 
     model.train()
@@ -56,7 +57,9 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     logging.info(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
 
     #### Optimizer
-    criterion = torch.nn.CrossEntropyLoss()
+    ce_criterion = torch.nn.CrossEntropyLoss()
+    if args['model_mode'] == "uncertainty":
+        gnll_criterion = torch.nn.GaussianNLLLoss()
     model_optimizer = torch.optim.Adam(model.parameters(), lr=args['lr'])
 
     train_set_folder = f"{datasetsts_dir[dataset_name]['train']}"
@@ -136,9 +139,23 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             classifiers_optimizers[current_group_num].zero_grad()
             
             if not args['use_amp16']:
-                descriptors = model(images)
+                descriptors, vars = model(images)
                 output = classifiers[current_group_num](descriptors, targets)
-                loss = criterion(output, targets)
+                #loss = criterion1(output, targets)
+                loss_ce = ce_criterion(output, targets)
+                if args['model_mode'] == "uncertainty":
+                    # Normalize class weights to get the ground-truth "prototype" for each class
+                    weights = classifiers[current_group_num].weight
+                    norm_weights = torch.nn.functional.normalize(weights, p=2, dim=1)
+                    # Select the specific target vector for each image in the batch
+                    target_vectors = norm_weights[targets]                    
+                    # Calculate GNLL loss comparing the descriptor to its class prototype
+                    # Ensure vars are positive (e.g., using torch.exp or F.softplus)
+                    loss_gnll = gnll_criterion(descriptors, target_vectors, vars)                    
+                    # Sum of classification loss and uncertainty estimation loss
+                    loss = loss_ce + loss_gnll
+                else:
+                    loss = loss_ce
                 loss.backward()
                 # epoch_losses = np.append(epoch_losses, loss.item())
                 epoch_losses.append(loss.item())
@@ -147,9 +164,22 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                 classifiers_optimizers[current_group_num].step()
             else:  # Use AMP 16
                 with torch.amp.autocast("cuda"):
-                    descriptors = model(images)
+                    descriptors, vars = model(images)
                     output = classifiers[current_group_num](descriptors, targets)
-                    loss = criterion(output, targets)
+                    # loss = criterion1(output, targets)
+                    if args['model_mode'] == "uncertainty":
+                        # Normalize class weights to get the ground-truth "prototype" for each class
+                        weights = classifiers[current_group_num].weight
+                        norm_weights = torch.nn.functional.normalize(weights, p=2, dim=1)
+                        # Select the specific target vector for each image in the batch
+                        target_vectors = norm_weights[targets]                    
+                        # Calculate GNLL loss comparing the descriptor to its class prototype
+                        # Ensure vars are positive (e.g., using torch.exp or F.softplus)
+                        loss_gnll = gnll_criterion(descriptors, target_vectors, vars)                    
+                        # Sum of classification loss and uncertainty estimation loss
+                        loss = loss_ce + loss_gnll
+                    else:
+                        loss = ce_criterion(output, targets)
                 scaler.scale(loss).backward()
                 # epoch_losses = np.append(epoch_losses, loss.item())
                 epoch_losses.append(loss.item())

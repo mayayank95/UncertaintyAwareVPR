@@ -67,7 +67,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         )
         all_descriptors = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
         for images, indices in tqdm(database_dataloader):
-            descriptors = model(images.to(device))
+            descriptors, vars = model(images.to(device))
             descriptors = descriptors.cpu().numpy()
             all_descriptors[indices.numpy(), :] = descriptors
             if args["dry_run"]:
@@ -79,7 +79,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         )
         queries_dataloader = DataLoader(dataset=queries_subset_ds, num_workers=args['num_workers'], batch_size=1, pin_memory=(device == "cuda"))
         for images, indices in tqdm(queries_dataloader):
-            descriptors = model(images.to(device))
+            descriptors, vars = model(images.to(device))
             descriptors = descriptors.cpu().numpy()
             all_descriptors[indices.numpy(), :] = descriptors
             if args["dry_run"]:
