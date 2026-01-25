@@ -15,7 +15,7 @@ def _ensure_dir(dst):
 def unzip_folder(src: Path, dst: Path, data_type: list[str]):
     for zip_path in src.glob("*.zip"):
         if zip_path.stem.lower() not in data_type and data_type != "all":
-            logger.info(f"Skipping {zip_path.name} as it is not in the specified datasets_type.")
+            logger.debug(f"Skipping {zip_path.name} as it is not in the specified datasets_type.")
             continue    
         out_dir = dst / zip_path.stem  # folder named like the zip
         logger.info(f"Unzipping {zip_path.name} -> {out_dir}")
@@ -33,7 +33,6 @@ def upload_dataset(cfg, entries) -> Dict[str, Dict[str, Path]]:
     
     colab = cfg["colab"]
     dry_run = cfg["dry_run"]
-    verbose = cfg["verbose"]
     data_type = cfg["datasets_type"]
 
     # ---- Convert string paths (from parser.normalize) to Path objects ONCE ----
@@ -77,8 +76,7 @@ def upload_dataset(cfg, entries) -> Dict[str, Dict[str, Path]]:
 
         # ---- Local: nothing to do ----
         if not colab:
-            if verbose:
-                logger.debug(f"[{name}] Using dataset in-place at {dst}")
+            logger.debug(f"[{name}] Using dataset in-place at {dst}")
                 
         # ---- Colab: ensure destination exists ----
         else: 
@@ -86,12 +84,10 @@ def upload_dataset(cfg, entries) -> Dict[str, Dict[str, Path]]:
                 if dry_run:
                     logger.info(f"[{name}] DRY RUN: would create destination folder: {dst}")
                 else:
-                    if verbose:
-                        logger.debug(f"[{name}] Creating destination folder: {dst}")
+                    logger.info(f"[{name}] Creating destination folder: {dst}")
                     _ensure_dir(dst)
             if not dry_run:
-                if verbose:
-                    logger.debug(f"[{name}] Extracting dataset from {src} to {dst}")  
+                logger.info(f"[{name}] Extracting dataset from {src} to {dst}")  
                 unzip_folder(src, dst, data_type) # Now it runs whether dst was just created or already existed
 
         # ---- Record train/validation/test paths (non-strict resolve to allow non-existing in dry-run) ----

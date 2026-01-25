@@ -1,12 +1,14 @@
-import os
 from glob import glob
 
+import logging
 import numpy as np
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from PIL import Image
 from sklearn.neighbors import NearestNeighbors
 from data.dataset_utils import read_images_paths
+
+logger = logging.getLogger(__name__)
 
 class TestDataset(data.Dataset):
     def __init__(self, database_folder, queries_folder, positive_dist_threshold=25, image_size=None, use_labels=True, resize_test_imgs=False):
@@ -27,6 +29,7 @@ class TestDataset(data.Dataset):
 
         self.num_database = len(self.database_paths)
         self.num_queries = len(self.queries_paths)
+        logger.debug(f"Found {self.num_database} database images and {self.num_queries} queries.")
 
         if use_labels:
             # Read UTM coordinates, which must be contained within the paths
@@ -37,6 +40,7 @@ class TestDataset(data.Dataset):
                 utm_east = float(image_path.split("@")[1])
                 utm_north = float(image_path.split("@")[2])
             except:
+                logger.error(f"Image path {image_path} does not contain UTM coordinates.")
                 raise ValueError(
                     "The path of images should be path/to/file/@utm_east@utm_north@...@.jpg "
                     f"but it is {image_path}, which does not contain the UTM coordinates."
@@ -50,6 +54,7 @@ class TestDataset(data.Dataset):
             ).astype(float)
 
             # Find positives_per_query, which are within positive_dist_threshold (default 25 meters)
+            logger.debug("Fitting NearestNeighbors to find positives...")
             knn = NearestNeighbors(n_jobs=-1)
             knn.fit(self.database_utms)
             self.positives_per_query = knn.radius_neighbors(

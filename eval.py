@@ -60,7 +60,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     logger.info(f"Testing on {test_ds}")
 
     with torch.inference_mode():
-        logger.debug("Extracting database descriptors for evaluation/testing")
+        logger.info("Extracting database descriptors for evaluation/testing")
         database_subset_ds = Subset(test_ds, list(range(test_ds.num_database)))
         database_dataloader = DataLoader(
             dataset=database_subset_ds, num_workers=args['num_workers'], batch_size=args['infer_batch_size'], pin_memory=(device == "cuda")
@@ -73,7 +73,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
             if args["dry_run"]:
                 break
 
-        logger.debug("Extracting queries descriptors for evaluation/testing using batch size 1")
+        logger.info("Extracting queries descriptors for evaluation/testing using batch size 1")
         queries_subset_ds = Subset(
             test_ds, list(range(test_ds.num_database, test_ds.num_database + test_ds.num_queries))
         )
@@ -88,6 +88,11 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     queries_descriptors = all_descriptors[test_ds.num_database :]
     database_descriptors = all_descriptors[: test_ds.num_database]
 
+    if args['dry_run']:
+        # In dry_run, we only processed a partial batch. Slice to avoid FAISS on garbage data.
+        database_descriptors = database_descriptors[:min(test_ds.num_database, args['infer_batch_size'])]
+        queries_descriptors = queries_descriptors[:1]
+
     # Save heavy .npy files in the sub-folder
     if args['save_descriptors'] and not args['dry_run']:
         logger.info(f"Saving the descriptors in {dataset_output_dir}")
@@ -99,7 +104,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     faiss_index.add(database_descriptors)
     del database_descriptors, all_descriptors
 
-    logger.debug("Calculating recalls")
+    logger.info("Calculating recalls")
     _, predictions = faiss_index.search(queries_descriptors, max(args['recall_values']))
 
     recalls = None

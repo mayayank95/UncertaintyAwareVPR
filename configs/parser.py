@@ -35,7 +35,6 @@ def parse_args() -> argparse.Namespace:
     # - if provided => True
     p.add_argument("--colab", action="store_true", help="Run in Google Colab mode (overrides config).")
     p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations.")
-    p.add_argument("--verbose", action="store_true", help="info/debug level.")
 
     # Optional: save post-merge config
     p.add_argument("--save_config", action="store_true", help="Save merged configuration to logs folder")
@@ -156,7 +155,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-def setup_logging(logs_folder: Optional[str], verbose: bool, dry_run: bool = False):
+def setup_logging(logs_folder: Optional[str], dry_run: bool = False):
     """
     Configures a unified logging system:
     - Console: Shows clean INFO messages.
@@ -165,7 +164,7 @@ def setup_logging(logs_folder: Optional[str], verbose: bool, dry_run: bool = Fal
     """
     
     # Root level acts as the master gatekeeper
-    root_level = logging.DEBUG if verbose else logging.INFO 
+    root_level = logging.DEBUG
     
     handlers = []
 
@@ -251,7 +250,7 @@ def build_config():
     merged = normalize(merged)
 
     # Initialize the logging system
-    log_dir = setup_logging(merged.get("logs_folder"), merged.get("verbose", False), dry_run=merged.get("dry_run", False))
+    log_dir = setup_logging(merged.get("logs_folder"), dry_run=merged.get("dry_run", False))
     merged['log_dir'] = str(log_dir) if log_dir else None # Ensure logs_folder is set to the actual log_dir used
 
     # REQUIRED config fields
@@ -280,20 +279,18 @@ def build_config():
         logger.info(f"Saved merged config to {outp}")
 
     # Debug logs (replaces prints)
-    if merged.get("verbose", False):
-        logger.debug(f"Config file: {cfg_path}")
-        logger.debug(f"data_folder: {merged['data_folder']}")
-        logger.debug(f"colab: {merged['colab']}, dry_run: {merged['dry_run']}")
-        if merged["colab"]:
-            logger.debug(f"local_data_folder: {merged['local_data_folder']}")
-        logger.info(f"entries to process: {[e.get('name') for e in entries]}")
-        logger.debug(f"Using device: {merged['device']}")
-        logger.info(f"method: {merged.get('method')}, backbone: {merged.get('backbone')}, descriptors_dimension: {merged.get('descriptors_dimension')}")    
-        if merged.get('image_size') is not None:
-            logger.info(f"image_size: {merged.get('image_size')}")
-        if merged.get("resume_model") is not None:
-            logger.info(f"resume_model: {merged.get('resume_model')}")
-        
+    logger.debug(f"Config file: {cfg_path}")
+    logger.debug(f"data_folder: {merged['data_folder']}")
+    logger.debug(f"colab: {merged['colab']}, dry_run: {merged['dry_run']}")
+    if merged["colab"]:
+        logger.debug(f"local_data_folder: {merged['local_data_folder']}")
+    logger.info(f"entries to process: {[e.get('name') for e in entries]}")
+    logger.info(f"Using device: {merged['device']}")
+    logger.info(f"method: {merged.get('method')}, backbone: {merged.get('backbone')}, descriptors_dimension: {merged.get('descriptors_dimension')}")    
+    if merged.get('image_size') is not None:
+        logger.info(f"image_size: {merged.get('image_size')}")
+    if merged.get("resume_model") is not None:
+        logger.info(f"resume_model: {merged.get('resume_model')}")
 
     return merged, entries
 

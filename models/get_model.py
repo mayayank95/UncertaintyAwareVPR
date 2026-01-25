@@ -12,12 +12,12 @@ def get_model(args):
         # model = cosplace_network.GeoLocalizationNet(backbone, descriptors_dimension, train_all_layers)
         model = deliver_model(args)
     elif args['method'] == "cosplace_pretrained":
+        logger.info(f"Loading pretrained model from torch.hub: backbone={args['backbone']}, dim={args['descriptors_dimension']}")
         model = torch.hub.load("gmberton/cosplace", "get_trained_model", args['backbone'], args['descriptors_dimension'])
     if args.get('resume_model') is not None:
         logger.info(f"Loading model from {args['resume_model']}")
         model_state_dict = torch.load(args['resume_model'], map_location='cpu')
         model.load_state_dict(model_state_dict)
-    else:
-        logger.info("WARNING: You didn't provide a path to resume the model (--resume_model parameter). " +
-                    "Using randomly initialized weights.")
+    elif args['method'] != "cosplace_pretrained":
+        logger.info("No --resume_model provided. Initializing model with default weights (ImageNet).")
     return model

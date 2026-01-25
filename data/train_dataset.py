@@ -1,6 +1,5 @@
 
 import os
-from pyparsing import Path
 import torch
 import random
 import logging
@@ -15,6 +14,7 @@ import data.dataset_utils as dataset_utils
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+logger = logging.getLogger(__name__)
 
 class TrainDataset(torch.utils.data.Dataset):
     def __init__(self, dataset_name, args, dataset_folder, M=10, alpha=30, N=5, L=2,
@@ -44,19 +44,21 @@ class TrainDataset(torch.utils.data.Dataset):
         # dataset_output_dir = Path(args['log_dir']) / dataset_name
         # filename = f"{dataset_output_dir}/cache/{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch"
         dataset_name = os.path.basename(dataset_folder) 
-        cache_dir = os.path.join(args['log_dir'], dataset_name, "cache")
+        # Use the dataset folder for caching so it persists across different runs (different log_dirs)
+        cache_dir = os.path.join(dataset_folder, "cache")
         filename = os.path.join(cache_dir, f"{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch")
-        if not os.path.exists(filename):
-            logging.info(f"Cached dataset {filename} does not exist, I'll create it now.")
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
-            self.initialize(dataset_folder, M, N, alpha, L, min_images_per_class, filename)
-        elif current_group == 0:
-            logging.info(f"Using cached dataset {filename}")
         
-        # Load the pre-computed geographic clusters: 
-        # classes_per_group: List of groups, each containing distant class IDs.
-        # images_per_class: Dict mapping each class ID to its list of image paths.
-        classes_per_group, self.images_per_class = torch.load(filename)
+        if os.path.exists(filename):
+            if current_group == 0:
+                logger.info(f"Using cached dataset {filename}")
+            classes_per_group, self.images_per_class = torch.load(filename)
+        else:
+            logger.info(f"Cached dataset {filename} does not exist, I'll create it now.")
+            classes_per_group, self.images_per_class = self.initialize(dataset_folder, M, N, alpha, L, min_images_per_class)
+            if not args['dry_run']:
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
+                torch.save((classes_per_group, self.images_per_class), filename)
+
         if current_group >= len(classes_per_group):
             raise ValueError(f"With this configuration there are only {len(classes_per_group)} " +
                              f"groups, therefore I can't create the {current_group}th group. " +
@@ -89,7 +91,7 @@ class TrainDataset(torch.utils.data.Dataset):
         try:
             pil_image = TrainDataset.open_image(image_path)
         except Exception as e:
-            logging.info(f"ERROR image {image_path} couldn't be opened, it might be corrupted.")
+            logger.error(f"ERROR image {image_path} couldn't be opened, it might be corrupted.")
             raise e
         
         tensor_image = T.functional.to_tensor(pil_image)
@@ -110,23 +112,23 @@ class TrainDataset(torch.utils.data.Dataset):
         return len(self.classes_ids)
     
     @staticmethod
-    def initialize(dataset_folder, M, N, alpha, L, min_images_per_class, filename):
-        logging.debug(f"Searching training images in {dataset_folder}")
+    def initialize(dataset_folder, M, N, alpha, L, min_images_per_class):
+        logger.debug(f"Searching training images in {dataset_folder}")
         
         images_paths = dataset_utils.read_images_paths(dataset_folder)
-        logging.debug(f"Found {len(images_paths)} images")
+        logger.debug(f"Found {len(images_paths)} images")
         
-        logging.debug("For each image, get its UTM east, UTM north and heading from its path")
+        logger.debug("For each image, get its UTM east, UTM north and heading from its path")
         images_metadatas = [p.split("@") for p in images_paths]
         # field 1 is UTM east, field 2 is UTM north, field 9 is heading
         utmeast_utmnorth_heading = [(m[1], m[2], m[9]) for m in images_metadatas]
         utmeast_utmnorth_heading = np.array(utmeast_utmnorth_heading).astype(np.float64)
         
-        logging.debug("For each image, get class and group to which it belongs")
+        logger.debug("For each image, get class and group to which it belongs")
         class_id__group_id = [TrainDataset.get__class_id__group_id(*m, M, alpha, N, L)
                               for m in utmeast_utmnorth_heading]
         
-        logging.debug("Group together images belonging to the same class")
+        logger.debug("Group together images belonging to the same class")
         images_per_class = defaultdict(list)
         for image_path, (class_id, _) in zip(images_paths, class_id__group_id):
             images_per_class[class_id].append(image_path)
@@ -135,7 +137,7 @@ class TrainDataset(torch.utils.data.Dataset):
         # is a list with the paths of images within that class.
         images_per_class = {k: v for k, v in images_per_class.items() if len(v) >= min_images_per_class}
         
-        logging.debug("Group together classes belonging to the same group")
+        logger.debug("Group together classes belonging to the same group")
         # Classes_per_group is a dict where the key is group_id, and the value
         # is a list with the class_ids belonging to that group.
         classes_per_group = defaultdict(set)
@@ -148,8 +150,8 @@ class TrainDataset(torch.utils.data.Dataset):
         # Each sublist represents the classes within a group.
         classes_per_group = [list(c) for c in classes_per_group.values()]
         
-        logging.debug(f"Loaded {len(classes_per_group)} groups and {len(images_per_class)} total classes.")
-        torch.save((classes_per_group, images_per_class), filename)
+        logger.debug(f"Loaded {len(classes_per_group)} groups and {len(images_per_class)} total classes.")
+        return classes_per_group, images_per_class
     
     @staticmethod
     def get__class_id__group_id(utm_east, utm_north, heading, M, alpha, N, L):

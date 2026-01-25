@@ -6,6 +6,8 @@ from PIL import ImageFile
 # Ensure the training doesn't crash if an image is slightly corrupted or truncated
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+logger = logging.getLogger(__name__)
+
 def read_images_paths(dataset_folder, get_abs_path=True):
     """
     Finds image paths within 'dataset_folder' efficiently.
@@ -29,7 +31,7 @@ def read_images_paths(dataset_folder, get_abs_path=True):
     
     # 1. FAST PATH: If the text file exists, read it directly (extremely fast for large datasets)
     if os.path.exists(file_with_paths):
-        logging.debug(f"Reading paths from {file_with_paths}")
+        logger.debug(f"Reading paths from {file_with_paths}")
         with open(file_with_paths, "r") as file:
             images_paths = file.read().splitlines()
         
@@ -44,7 +46,7 @@ def read_images_paths(dataset_folder, get_abs_path=True):
             
     # 2. SLOW PATH: Use glob if no text file is provided
     else:
-        logging.debug(f"Searching images in {dataset_folder} with glob() (this may be slow for large folders)")
+        logger.debug(f"Searching images in {dataset_folder} with glob() (this may be slow for large folders)")
         # Search for all files recursively
         all_files = glob(os.path.join(dataset_folder, "**", "*"), recursive=True)
         
