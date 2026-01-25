@@ -29,7 +29,7 @@ def init(args):
     )
     logger.info(f"The outputs are being saved in {args['log_dir']}")
 
-    model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'))
+    model = get_model(args)
     device = torch.device(args["device"])
     return device, model
 
