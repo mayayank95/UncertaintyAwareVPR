@@ -58,6 +58,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     ce_criterion = torch.nn.CrossEntropyLoss()
     if args['model_mode'] == "uncertainty":
         gnll_criterion = torch.nn.GaussianNLLLoss()
+        uncertainty_lambda = args.get('uncertainty_lambda', 1.0)
     model_optimizer = torch.optim.Adam(model.parameters(), lr=args['lr'])
 
     train_set_folder = f"{datasetsts_dir[dataset_name]['train']}"
@@ -148,10 +149,10 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                     # Select the specific target vector for each image in the batch
                     target_vectors = norm_weights[targets]                    
                     # Calculate GNLL loss comparing the descriptor to its class prototype
-                    # Ensure vars are positive (e.g., using torch.exp or F.softplus)
-                    loss_gnll = gnll_criterion(descriptors, target_vectors, vars)                    
+                    # vars is log_sigma_sq, so we exponentiate it to get variance
+                    loss_gnll = gnll_criterion(descriptors, target_vectors, torch.exp(vars))
                     # Sum of classification loss and uncertainty estimation loss
-                    loss = loss_ce + loss_gnll
+                    loss = loss_ce + uncertainty_lambda * loss_gnll
                 else:
                     loss = loss_ce
                 loss.backward()
@@ -165,6 +166,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                     descriptors, vars = model(images)
                     output = classifiers[current_group_num](descriptors, targets)
                     # loss = criterion1(output, targets)
+                    loss_ce = ce_criterion(output, targets)
                     if args['model_mode'] == "uncertainty":
                         # Normalize class weights to get the ground-truth "prototype" for each class
                         weights = classifiers[current_group_num].weight
@@ -172,12 +174,12 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                         # Select the specific target vector for each image in the batch
                         target_vectors = norm_weights[targets]                    
                         # Calculate GNLL loss comparing the descriptor to its class prototype
-                        # Ensure vars are positive (e.g., using torch.exp or F.softplus)
-                        loss_gnll = gnll_criterion(descriptors, target_vectors, vars)                    
+                        # vars is log_sigma_sq, so we exponentiate it to get variance
+                        loss_gnll = gnll_criterion(descriptors, target_vectors, torch.exp(vars))
                         # Sum of classification loss and uncertainty estimation loss
-                        loss = loss_ce + loss_gnll
+                        loss = loss_ce + uncertainty_lambda * loss_gnll
                     else:
-                        loss = ce_criterion(output, targets)
+                        loss = loss_ce
                 scaler.scale(loss).backward()
                 # epoch_losses = np.append(epoch_losses, loss.item())
                 epoch_losses.append(loss.item())

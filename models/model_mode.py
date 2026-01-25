@@ -7,6 +7,17 @@ from models.cosplace_uncertainty.cosplace_model.layers import L2Norm
 #from cosplace_model.cosplace_network import GeoLocalizationNet
 #from cosplace_model.layers import L2Norm
 
+class GeneralModelWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        output = self.model(x)
+        if isinstance(output, tuple):
+            return output
+        return output, torch.zeros_like(output)
+
 class Basic(GeoLocalizationNet):
     def __init__(self, opt=None):
         super().__init__(
@@ -66,4 +77,3 @@ if __name__ == '__main__':
 
     print(outputs_tea[0].shape, outputs_tea[1].shape)
     print(outputs_stu[0].shape, outputs_stu[1].shape)
-

@@ -95,6 +95,7 @@ def parse_args() -> argparse.Namespace:
     # uncertainty parameters
     p.add_argument("--model_mode", type=str, default=None, help="model mode: basic/uncertainty")
     p.add_argument("--sigma_dim", type=int, default=None, help="dimension of the output uncertainty vector (variance)")
+    p.add_argument("--uncertainty_lambda", type=float, default=1.0, help="Weight for the GaussianNLLLoss in uncertainty mode")
     return p.parse_args()  
     
 

@@ -60,6 +60,10 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     logger.info(f"Testing on {test_ds}")
 
     with torch.inference_mode():
+        # Initialize uncertainty accumulators
+        total_uncertainty_sum = 0.0
+        total_uncertainty_count = 0
+
         logger.info("Extracting database descriptors for evaluation/testing")
         database_subset_ds = Subset(test_ds, list(range(test_ds.num_database)))
         database_dataloader = DataLoader(
@@ -68,6 +72,11 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         all_descriptors = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
         for images, indices in tqdm(database_dataloader):
             descriptors, vars = model(images.to(device))
+            
+            # if args['model_mode'] == "uncertainty":
+            #     total_uncertainty_sum += vars.sum().item()
+            #     total_uncertainty_count += vars.numel()
+
             descriptors = descriptors.cpu().numpy()
             all_descriptors[indices.numpy(), :] = descriptors
             if args["dry_run"]:
@@ -80,10 +89,19 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         queries_dataloader = DataLoader(dataset=queries_subset_ds, num_workers=args['num_workers'], batch_size=1, pin_memory=(device == "cuda"))
         for images, indices in tqdm(queries_dataloader):
             descriptors, vars = model(images.to(device))
+            
+            if args['model_mode'] == "uncertainty":
+                total_uncertainty_sum += vars.sum().item()
+                total_uncertainty_count += vars.numel()
+
             descriptors = descriptors.cpu().numpy()
             all_descriptors[indices.numpy(), :] = descriptors
             if args["dry_run"]:
                 break
+
+    if args['model_mode'] == "uncertainty" and total_uncertainty_count > 0:
+        avg_uncertainty = total_uncertainty_sum / total_uncertainty_count
+        logger.info(f"Average Uncertainty (log_sigma_sq): {avg_uncertainty:.4f}")
 
     queries_descriptors = all_descriptors[test_ds.num_database :]
     database_descriptors = all_descriptors[: test_ds.num_database]
