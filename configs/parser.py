@@ -25,10 +25,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--datasets_type", type=str, default="all", help='Datasets type to upload(e.g. "all", "train", or "test", "val")')
 
     # Resume parameters
-    # p.add_argument("--resume_train", type=str, default=None,
-    #                     help="path to checkpoint to resume, e.g. logs/.../last_checkpoint.pth")
-    # p.add_argument("--resume_model", type=str, default=None,
-    #                     help="path to model to resume, e.g. logs/.../best_model.pth")
+    p.add_argument("--resume_train", type=str, default=None,
+                        help="path to checkpoint to resume, e.g. logs/.../last_checkpoint.pth")
+    p.add_argument("--resume_model", type=str, default=None,
+                        help="path to model to resume, e.g. logs/.../best_model.pth")
                         
     # IMPORTANT: tri-state booleans so config merging works:
     # - if not provided => False
@@ -43,7 +43,6 @@ def parse_args() -> argparse.Namespace:
     # model parameters
     p.add_argument("--backbone", type=str, default=None, help="basic backbone model")
     p.add_argument("--descriptors_dimension", type=int, default=None, help="dimension of the output feature vector")
-    p.add_argument("--resume_model", type=str, default=None, help="model checkpoint to resume training from/evaluate")
     p.add_argument("--method", type=str, default=None, help="model name")
     p.add_argument("--positive_dist_threshold", type=int, default=None, help="Distance in meters for a prediction to be considered a positive.")
     p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square).")
@@ -75,6 +74,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size", type=int, default=None, help="Batch size for DataLoader.")
     p.add_argument("--iterations_per_epoch", type=int, default=10000, help="_")
     p.add_argument("--epochs_num", type=int, default=50, help="_")
+    p.add_argument("--patience", type=int, default=5, help="Patience for early stopping (epochs without improvement)")
 
     # Data augmentation
     p.add_argument("--augmentation_device", type=str, default="cuda", choices=["cuda", "cpu"], help="on which device to run data augmentation")
@@ -290,8 +290,8 @@ def build_config():
     logger.info(f"method: {merged.get('method')}, backbone: {merged.get('backbone')}, descriptors_dimension: {merged.get('descriptors_dimension')}")    
     if merged.get('image_size') is not None:
         logger.info(f"image_size: {merged.get('image_size')}")
-    if merged.get("resume_model") is not None:
-        logger.info(f"resume_model: {merged.get('resume_model')}")
+    if merged.get("resume_train") is not None:
+        logger.info(f"resume_train: {merged.get('resume_train')}")
 
     return merged, entries
 

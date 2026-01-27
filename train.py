@@ -81,10 +81,14 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     #### Resume
     if args.get('resume_train') is not None:
         model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num = \
-            util.resume_train(args, args['output_folder'], model, model_optimizer, classifiers, classifiers_optimizers)
-        model = model.to(args['device'])
+            util.resume_train(device, args, args['log_dir'], model, model_optimizer, classifiers, classifiers_optimizers)
         epoch_num = start_epoch_num - 1
         logger.info(f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}")
+        
+        # Verify resume performance
+        logger.info("Verifying resumed model performance...")
+        _, resume_recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        logger.info(f"Resumed model performance: {resume_recalls_str}")
     else:
         best_val_recall1 = start_epoch_num = 0
 
@@ -109,6 +113,9 @@ def train(args, model, device, dataset_name, datasetsts_dir):
 
     if args['use_amp16']:
         scaler = torch.amp.GradScaler("cuda")
+
+    patience = args.get('patience', 5)
+    not_improved_count = 0
 
     for epoch_num in range(start_epoch_num, args['epochs_num']):
         
@@ -205,6 +212,15 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {val_ds}: {recalls_str[:20]}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
+        
+        if is_best:
+            not_improved_count = 0
+        else:
+            not_improved_count += 1
+            if not_improved_count >= patience:
+                logger.info(f"Early stopping triggered after {patience} epochs without improvement.")
+                break
+
         # Save checkpoint, which contains all training parameters
         if not args['dry_run']:
             util.save_checkpoint({
