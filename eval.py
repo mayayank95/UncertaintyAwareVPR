@@ -1,34 +1,40 @@
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
 
+import faiss
 import numpy as np
 import torch
-import faiss
-from torch.utils.data import DataLoader
-from torch.utils.data.dataset import Subset
+from scipy.stats import pearsonr
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
-from data.test_dataset import TestDataset
-
-import logging
+# Local module imports
 from configs.parser import build_config
+from data.test_dataset import TestDataset
 from data.upload_dataset import upload_dataset
+from losses.cosface_loss import cosine_distance
 from models.get_model import get_model
 from utils import visualizations
 
-# Define the logger for this module
-# It will inherit the configuration set in setup_logging within parser.py
+# Initialize Logger
 logger = logging.getLogger(__name__)
 
+def _compute_correlation(distances, variances):
+    """Compute Pearson correlation between distances and variances."""
+    if len(distances) > 1 and np.std(distances) > 0 and np.std(variances) > 0:
+        corr, _ = pearsonr(distances, variances)
+        return corr
+    return 0.0
+
 def init(args):
+    """Initialize device and model."""
     logger.info(" ".join(sys.argv))
     logger.info(f"Arguments: {args}")
     logger.info(
-        f"Testing with {args['method']} with a {args['backbone']} backbone and descriptors dimension {args['descriptors_dimension']}"
+        f"Testing {args['method']} | Backbone: {args['backbone']} | Dim: {args['descriptors_dimension']}"
     )
-    logger.info(f"The outputs are being saved in {args['log_dir']}")
-
     model = get_model(args)
     device = torch.device(args["device"])
     return device, model
@@ -36,144 +42,137 @@ def init(args):
 def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     """
     Evaluates the model on a single dataset.
-    Saves heavy outputs (descriptors, images) in a dataset-specific subfolder.
-    Logs all numerical results (Recalls) to the central log file.
+    Extracts features once, then computes Recalls and Uncertainty metrics.
     """
     model = model.eval().to(device)
-
-    # Path for dataset-specific outputs (images, descriptors)
     dataset_output_dir = Path(args['log_dir']) / dataset_name
     if not args['dry_run']:
         dataset_output_dir.mkdir(parents=True, exist_ok=True)
-    # Setup Dataset paths
-    database_folder = f"{eval_ds_path}/database"
-    queries_folder = f"{eval_ds_path}/queries"
 
     test_ds = TestDataset(
-        database_folder,
-        queries_folder,
+        f"{eval_ds_path}/database",
+        f"{eval_ds_path}/queries",
         positive_dist_threshold=args['positive_dist_threshold'],
         image_size=args.get('image_size'),
         use_labels=args['use_labels'],
     )
-    logger.info(f"{'='*30}")
-    logger.info(f"Testing on {test_ds}")
+    logger.info(f"{'='*30}\nTesting on {test_ds}")
+
+    # --- 1. Combined Descriptor & Variance Extraction ---
+    # We store both to avoid re-running the model for uncertainty calculations
+    all_descriptors = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
+    all_variances = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
 
     with torch.inference_mode():
-        # Initialize uncertainty accumulators
-        total_uncertainty_sum = 0.0
-        total_uncertainty_count = 0
-
-        logger.info("Extracting database descriptors for evaluation/testing")
-        database_subset_ds = Subset(test_ds, list(range(test_ds.num_database)))
-        database_dataloader = DataLoader(
-            dataset=database_subset_ds, num_workers=args['num_workers'], batch_size=args['infer_batch_size'], pin_memory=(device == "cuda")
+        # Database extraction
+        db_subset = Subset(test_ds, list(range(test_ds.num_database)))
+        db_loader = DataLoader(
+            db_subset, batch_size=args['infer_batch_size'], 
+            num_workers=args['num_workers'], pin_memory=(device.type == "cuda")
         )
-        all_descriptors = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
-        for images, indices in tqdm(database_dataloader):
-            descriptors, vars = model(images.to(device))
-            
-            # if args['model_mode'] == "uncertainty":
-            #     total_uncertainty_sum += vars.sum().item()
-            #     total_uncertainty_count += vars.numel()
+        logger.info("Extracting database features...")
+        for images, indices in tqdm(db_loader):
+            desc, var = model(images.to(device))
+            all_descriptors[indices.numpy(), :] = desc.cpu().numpy()
+            all_variances[indices.numpy(), :] = var.cpu().numpy()
+            if args["dry_run"]: break
 
-            descriptors = descriptors.cpu().numpy()
-            all_descriptors[indices.numpy(), :] = descriptors
-            if args["dry_run"]:
-                break
-
-        logger.info("Extracting queries descriptors for evaluation/testing using batch size 1")
-        queries_subset_ds = Subset(
-            test_ds, list(range(test_ds.num_database, test_ds.num_database + test_ds.num_queries))
+        # Query extraction
+        q_subset = Subset(test_ds, list(range(test_ds.num_database, test_ds.num_database + test_ds.num_queries)))
+        q_loader = DataLoader(
+            q_subset, batch_size=args['infer_batch_size'], 
+            num_workers=args['num_workers'], pin_memory=(device.type == "cuda")
         )
-        queries_dataloader = DataLoader(dataset=queries_subset_ds, num_workers=args['num_workers'], batch_size=1, pin_memory=(device == "cuda"))
-        for images, indices in tqdm(queries_dataloader):
-            descriptors, vars = model(images.to(device))
-            
-            if args['model_mode'] == "uncertainty":
-                total_uncertainty_sum += vars.sum().item()
-                total_uncertainty_count += vars.numel()
+        logger.info("Extracting query features...")
+        for images, indices in tqdm(q_loader):
+            desc, var = model(images.to(device))
+            all_descriptors[indices.numpy(), :] = desc.cpu().numpy()
+            all_variances[indices.numpy(), :] = var.cpu().numpy()
+            if args["dry_run"]: break
 
-            descriptors = descriptors.cpu().numpy()
-            all_descriptors[indices.numpy(), :] = descriptors
-            if args["dry_run"]:
-                break
-
-    if args['model_mode'] == "uncertainty" and total_uncertainty_count > 0:
-        avg_uncertainty = total_uncertainty_sum / total_uncertainty_count
-        logger.info(f"Average Uncertainty (log_sigma_sq): {avg_uncertainty:.4f}")
-
-    queries_descriptors = all_descriptors[test_ds.num_database :]
-    database_descriptors = all_descriptors[: test_ds.num_database]
-
+    # Split for FAISS and evaluation
+    db_desc = all_descriptors[:test_ds.num_database]
+    q_desc = all_descriptors[test_ds.num_database:]
+    
     if args['dry_run']:
-        # In dry_run, we only processed a partial batch. Slice to avoid FAISS on garbage data.
-        database_descriptors = database_descriptors[:min(test_ds.num_database, args['infer_batch_size'])]
-        queries_descriptors = queries_descriptors[:1]
+        db_desc = db_desc[:args['infer_batch_size']]
+        q_desc = q_desc[:1]
 
-    # Save heavy .npy files in the sub-folder
-    if args['save_descriptors'] and not args['dry_run']:
-        logger.info(f"Saving the descriptors in {dataset_output_dir}")
-        np.save(f"{dataset_output_dir}/queries_descriptors.npy", queries_descriptors)
-        np.save(f"{dataset_output_dir}/database_descriptors.npy", database_descriptors)
+    if args.get('save_descriptors') and not args['dry_run']:
+        np.save(dataset_output_dir / "queries_descriptors.npy", q_desc)
+        np.save(dataset_output_dir / "database_descriptors.npy", db_desc)
 
-    # Use a kNN to find predictions
+    # --- 2. Similarity Search & Recalls ---
     faiss_index = faiss.IndexFlatL2(args['descriptors_dimension'])
-    faiss_index.add(database_descriptors)
-    del database_descriptors, all_descriptors
+    faiss_index.add(db_desc)
+    _, predictions = faiss_index.search(q_desc, max(args['recall_values']))
 
-    logger.info("Calculating recalls")
-    _, predictions = faiss_index.search(queries_descriptors, max(args['recall_values']))
+    recalls_str = "Labels not available"
+    recalls = np.zeros(len(args['recall_values']))
 
-    recalls = None
-    recalls_str = ""
-    # For each query, check if the predictions are correct
     if args['use_labels']:
         positives_per_query = test_ds.get_positives()
-        recalls = np.zeros(len(args['recall_values']))
-        for query_index, preds in enumerate(predictions):
+        for query_idx, preds in enumerate(predictions):
             for i, n in enumerate(args['recall_values']):
-                if np.any(np.isin(preds[:n], positives_per_query[query_index])):
+                if np.any(np.isin(preds[:n], positives_per_query[query_idx])):
                     recalls[i:] += 1
                     break
-
-        # Divide by num_queries and multiply by 100, so the recalls are in percentages
         recalls = recalls / test_ds.num_queries * 100
         recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(args['recall_values'], recalls)])
-        #logger.info(recalls_str)
         
-        # Save a small text file as a backup in the sub-folder
         if not args['dry_run'] and args['datasets_type'] == 'test':
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
-    if args['dry_run']:
-        logger.info("Dry run, not saving predictions visualizations.")
-        return recalls, recalls_str
-    
-    # Save visualizations of predictions
-    if args['num_preds_to_save'] != 0 and not args['dry_run']:
-            logger.info(f"Saving prediction images for {dataset_name} in {dataset_output_dir}")
-            visualizations.save_preds(
-                predictions[:, : args['num_preds_to_save']], 
-                test_ds, 
-                str(dataset_output_dir), 
-                args['save_only_wrong_preds'], 
-                args['use_labels'], 
-                args['num_queries_to_save']
-            )
-    return recalls, recalls_str
+    # --- 3. Uncertainty Correlation (Optimized) ---
+    uncertainty_corr = 0.0
+    if args['model_mode'] == "uncertainty" and args['use_labels']:
+        logger.info("Computing uncertainty correlation metrics...")
+        loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
+        
+        # Get query indices and their first positive ground truth from DB
+        q_indices = np.arange(test_ds.num_database, test_ds.num_database + test_ds.num_queries)
+        db_gt_indices = [pos[0] for pos in test_ds.get_positives()]
+        
+        # Convert to tensors for normalization/distance math
+        q_tensor = torch.from_numpy(all_descriptors[q_indices])
+        db_tensor = torch.from_numpy(all_descriptors[db_gt_indices])
+        q_var_tensor = torch.from_numpy(all_variances[q_indices])
+
+        q_norm = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
+        db_norm = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
+
+        if loss_type == 'gaussian_cosine':
+            dists = cosine_distance(q_norm, db_norm)
+        else:
+            dists = torch.sum((q_norm - db_norm) ** 2, dim=-1)      
+        mean_vars = torch.mean(q_var_tensor, dim=-1)
+        uncertainty_corr = _compute_correlation(dists.numpy(), mean_vars.numpy())
+
+    # --- 4. Visualizations ---
+    if args.get('num_preds_to_save', 0) != 0 and not args['dry_run']:
+        visualizations.save_preds(
+            predictions[:, :args['num_preds_to_save']], 
+            test_ds, str(dataset_output_dir), 
+            args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save']
+        )
+
+    return recalls, recalls_str, uncertainty_corr
 
 if __name__ == "__main__":
-    # ---- Load and build config ----       
     cfg, entries = build_config()
-    # Upload/Prepare datasets (returns a dict with paths)
-    datasetsts_dir = upload_dataset(cfg, entries)
-    # Initialize model and device
+    datasets_paths = upload_dataset(cfg, entries)
     device, model = init(cfg)
-    # Loop through each dataset entry and evaluate
-    for e in entries:
-        logger.info(f"Evaluating dataset: {e['name']}")
-        recalls, recalls_str = eval_dataset(cfg, model, device, e["name"], datasetsts_dir[e["name"]]['test'])
-        logger.info(recalls_str)
-    logger.info("="*30)
-    logger.info("All evaluations completed successfully.")
+
+    for entry in entries:
+        name = entry['name']
+        logger.info(f"Starting evaluation: {name}")
+        
+        recalls, r_str, corr = eval_dataset(
+            cfg, model, device, name, datasets_paths[name]['test']
+        )
+        
+        logger.info(f"Results for {name}: {r_str}")
+        if cfg['model_mode'] == "uncertainty":
+            logger.info(f"Uncertainty Pearson Correlation: {corr:.4f}")
+
+    logger.info("="*30 + "\nAll processes finished.")

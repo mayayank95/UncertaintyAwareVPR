@@ -16,6 +16,8 @@ from data.upload_dataset import upload_dataset
 from eval import eval_dataset
 from models.get_model import get_model
 from losses import cosface_loss
+from losses.cosface_loss import cosine_distance
+from losses.gaussian_cosine_loss import GaussianCosineLoss
 from utils import augmentations, commons, util
 
 
@@ -58,8 +60,13 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     #### Optimizer
     ce_criterion = torch.nn.CrossEntropyLoss()
     if args['model_mode'] == "uncertainty":
-        gnll_criterion = torch.nn.GaussianNLLLoss()
+        uncertainty_loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
+        if uncertainty_loss_type == 'gaussian_cosine':
+            uncertainty_criterion = GaussianCosineLoss()
+        else:  # default to gaussian_nll
+            uncertainty_criterion = torch.nn.GaussianNLLLoss()
         uncertainty_lambda = args.get('uncertainty_lambda', 1.0)
+        logger.info(f"Using uncertainty loss: {uncertainty_loss_type}")
     model_optimizer = torch.optim.Adam(model.parameters(), lr=args['lr'])
 
     train_set_folder = f"{datasetsts_dir[dataset_name]['train']}"
@@ -137,7 +144,6 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         epoch_losses = []#np.zeros((0, 1), dtype=np.float32)
         epoch_losses_ce = []
         epoch_losses_gnll = []
-        epoch_corrs = []
         
         for iteration in tqdm(range(args['iterations_per_epoch']), ncols=100):
             images, targets, _ = next(dataloader_iterator)
@@ -169,29 +175,13 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                 # Select the specific target vector for each image in the batch
                 target_vectors = norm_weights[targets]
                     
-                # Calculate GNLL loss comparing the descriptor to its class prototype
-                loss_gnll = gnll_criterion(mu_norm, target_vectors, variance)
-                
-                # Calculate Pearson correlation between squared error and variance
-                squared_error = (mu_norm - target_vectors) ** 2  # [B, D]
-                # Compute correlation for each dimension and average
-                corr_list = []
-                for d in range(squared_error.shape[1]):
-                    se_d = squared_error[:, d].detach().cpu().numpy()
-                    var_d = variance[:, d].detach().cpu().numpy()
-                    if len(se_d) > 1 and np.std(se_d) > 0 and np.std(var_d) > 0:
-                        corr, _ = pearsonr(se_d, var_d)
-                        corr_list.append(corr)
-                if corr_list:
-                    uncertainty_corr = np.mean(corr_list)
-                else:
-                    uncertainty_corr = 0.0
-                epoch_corrs.append(uncertainty_corr)
+                # Calculate uncertainty loss comparing the descriptor to its class prototype
+                loss_uncertainty = uncertainty_criterion(mu_norm, target_vectors, variance)
                 
                 # Sum of classification loss and uncertainty estimation loss
-                loss = loss_ce + uncertainty_lambda * loss_gnll
+                loss = loss_ce + uncertainty_lambda * loss_uncertainty
                 epoch_losses_ce.append(loss_ce.item())
-                epoch_losses_gnll.append((uncertainty_lambda * loss_gnll).item())
+                epoch_losses_gnll.append((uncertainty_lambda * loss_uncertainty).item())
             else:
                 epoch_losses_ce.append(loss_ce.item())
             
@@ -222,16 +212,15 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             mean_loss_ce = np.mean(epoch_losses_ce)
             mean_loss_gnll = np.mean(epoch_losses_gnll)
             mean_total_loss = np.mean(epoch_losses)
-            mean_corr = np.mean(epoch_corrs) if epoch_corrs else 0.0
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss_total = {mean_total_loss:.4f}, loss_ce = {mean_loss_ce:.4f}, "
-                        f"loss_gnll = {mean_loss_gnll:.4f}, uncertainty_corr = {mean_corr:.4f}")
+                        f"loss_gnll = {mean_loss_gnll:.4f}")
         else:
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         #### Evaluation
-        recalls, recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        recalls, recalls_str, uncertainty_corr = eval_dataset(args, model, device, dataset_name, val_set_folder)
         logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {val_ds}: {recalls_str[:20]}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
@@ -258,6 +247,10 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         if args['dry_run']:
             break
 
+    # Log final uncertainty correlation
+    if args['model_mode'] == "uncertainty":
+        logger.info(f"Final Uncertainty Correlation (val): {uncertainty_corr:.4f}")
+    
     logger.info(f"Trained for {epoch_num+1:02d} epochs, in total in {str(datetime.now() - start_time)[:-7]}")
     logger.info("Experiment finished (without any errors)")
 

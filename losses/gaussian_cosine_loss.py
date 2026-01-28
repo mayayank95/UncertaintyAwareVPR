@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from losses.cosface_loss import cosine_distance
 
 
 class GaussianCosineLoss(nn.Module):
@@ -22,6 +23,20 @@ class GaussianCosineLoss(nn.Module):
         super().__init__()
         self.eps = eps
 
+    @staticmethod
+    def compute_cosine_distance(input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Compute cosine distance between input and target vectors.
+        
+        Args:
+            input (torch.Tensor): Normalized embedding vectors of shape [B, D]
+            target (torch.Tensor): Target/prototype vectors of shape [B, D]
+        
+        Returns:
+            torch.Tensor: Cosine distance of shape [B], range [0, 2]
+        """
+        return cosine_distance(input, target)
+
     def forward(self, input: torch.Tensor, target: torch.Tensor, var: torch.Tensor) -> torch.Tensor:
         """
         Compute Gaussian Cosine Loss.
@@ -34,15 +49,13 @@ class GaussianCosineLoss(nn.Module):
         Returns:
             torch.Tensor: Scalar loss value (mean over batch and dimensions)
         """
-        # Compute cosine similarity: sum(input * target) along dimension -1
-        cos_sim = torch.sum(input * target, dim=-1, keepdim=True)  # [B, 1]
-        
-        # Convert to cosine distance: 1 - cos_sim
-        # Range: [0, 2] where 0 means identical, 2 means opposite
-        cosine_dist = 1.0 - cos_sim  # [B, 1]
+        # Compute cosine distance
+        cosine_dist = self.compute_cosine_distance(input, target)  # [B]
         
         # Gaussian NLL-inspired loss with cosine distance:
         # 0.5 * (dist / var + log(var))
-        loss = 0.5 * (cosine_dist / (var + self.eps) + torch.log(var + self.eps))
+        # Average variance across dimensions
+        mean_var = torch.mean(var, dim=-1)  # [B]
+        loss = 0.5 * (cosine_dist / (mean_var + self.eps) + torch.log(mean_var + self.eps))
         
         return loss.mean()
