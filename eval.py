@@ -130,23 +130,28 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
         
         # Get query indices and their first positive ground truth from DB
-        q_indices = np.arange(test_ds.num_database, test_ds.num_database + test_ds.num_queries)
-        db_gt_indices = [pos[0] for pos in test_ds.get_positives()]
+        # Filter out queries with no positives
+        positives = test_ds.get_positives()
+        valid_queries = [(i, pos[0]) for i, pos in enumerate(positives) if len(pos) > 0]
         
-        # Convert to tensors for normalization/distance math
-        q_tensor = torch.from_numpy(all_descriptors[q_indices])
-        db_tensor = torch.from_numpy(all_descriptors[db_gt_indices])
-        q_var_tensor = torch.from_numpy(all_variances[q_indices])
+        if len(valid_queries) > 0:
+            q_indices = np.array([i for i, _ in valid_queries])
+            db_gt_indices = np.array([idx for _, idx in valid_queries])
+            
+            # Convert to tensors for normalization/distance math
+            q_tensor = torch.from_numpy(all_descriptors[test_ds.num_database + q_indices])
+            db_tensor = torch.from_numpy(all_descriptors[db_gt_indices])
+            q_var_tensor = torch.from_numpy(all_variances[test_ds.num_database + q_indices])
 
-        q_norm = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
-        db_norm = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
+            q_norm = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
+            db_norm = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
 
-        if loss_type == 'gaussian_cosine':
-            dists = cosine_distance(q_norm, db_norm)
-        else:
-            dists = torch.sum((q_norm - db_norm) ** 2, dim=-1)      
-        mean_vars = torch.mean(q_var_tensor, dim=-1)
-        uncertainty_corr = _compute_correlation(dists.numpy(), mean_vars.numpy())
+            if loss_type == 'gaussian_cosine':
+                dists = cosine_distance(q_norm, db_norm)
+            else:
+                dists = torch.sum((q_norm - db_norm) ** 2, dim=-1)      
+            mean_vars = torch.mean(q_var_tensor, dim=-1)
+            uncertainty_corr = _compute_correlation(dists.numpy(), mean_vars.numpy())
 
     # --- 4. Visualizations ---
     if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == 'test':
@@ -174,9 +179,5 @@ if __name__ == "__main__":
         recalls, r_str, corr = eval_dataset(
             cfg, model, device, name, datasets_paths[name]['test']
         )
-        
-        logger.info(f"Results for {name}: {r_str}")
-        if cfg['model_mode'] == "uncertainty":
-            logger.info(f"Uncertainty Pearson Correlation: {corr:.4f}")
 
     logger.info("="*30 + "\nAll processes finished.")
