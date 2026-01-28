@@ -96,6 +96,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         # Verify resume performance
         logger.info("Verifying resumed model performance...")
         _, resume_recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
         logger.info(f"Resumed model performance: {resume_recalls_str}")
     else:
         best_val_recall1 = start_epoch_num = 0
@@ -144,6 +145,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         epoch_losses = []#np.zeros((0, 1), dtype=np.float32)
         epoch_losses_ce = []
         epoch_losses_gnll = []
+        epoch_variances = []
         
         for iteration in tqdm(range(args['iterations_per_epoch']), ncols=100):
             images, targets, _ = next(dataloader_iterator)
@@ -182,6 +184,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                 loss = loss_ce + uncertainty_lambda * loss_uncertainty
                 epoch_losses_ce.append(loss_ce.item())
                 epoch_losses_gnll.append((uncertainty_lambda * loss_uncertainty).item())
+                epoch_variances.append(variance.mean().item())
             else:
                 epoch_losses_ce.append(loss_ce.item())
             
@@ -212,16 +215,17 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             mean_loss_ce = np.mean(epoch_losses_ce)
             mean_loss_gnll = np.mean(epoch_losses_gnll)
             mean_total_loss = np.mean(epoch_losses)
+            mean_variance = np.mean(epoch_variances)
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss_total = {mean_total_loss:.4f}, loss_ce = {mean_loss_ce:.4f}, "
-                        f"loss_gnll = {mean_loss_gnll:.4f}")
+                        f"loss_gnll = {mean_loss_gnll:.4f}, mean_variance = {mean_variance:.4f}")
         else:
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         #### Evaluation
         recalls, recalls_str, uncertainty_corr = eval_dataset(args, model, device, dataset_name, val_set_folder)
-        logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {val_ds}: {recalls_str[:20]}")
+        logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
         
@@ -247,10 +251,6 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         if args['dry_run']:
             break
 
-    # Log final uncertainty correlation
-    if args['model_mode'] == "uncertainty":
-        logger.info(f"Final Uncertainty Correlation (val): {uncertainty_corr:.4f}")
-    
     logger.info(f"Trained for {epoch_num+1:02d} epochs, in total in {str(datetime.now() - start_time)[:-7]}")
     logger.info("Experiment finished (without any errors)")
 
