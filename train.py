@@ -7,6 +7,7 @@ from tqdm import tqdm
 import multiprocessing
 from datetime import datetime
 import torchvision.transforms as T
+from scipy.stats import pearsonr
 
 from configs.parser import build_config
 from data.test_dataset import TestDataset
@@ -134,6 +135,10 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         model = model.train()
         
         epoch_losses = []#np.zeros((0, 1), dtype=np.float32)
+        epoch_losses_ce = []
+        epoch_losses_gnll = []
+        epoch_corrs = []
+        
         for iteration in tqdm(range(args['iterations_per_epoch']), ncols=100):
             images, targets, _ = next(dataloader_iterator)
             images, targets = images.to(device), targets.to(device)
@@ -144,56 +149,65 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             model_optimizer.zero_grad()
             classifiers_optimizers[current_group_num].zero_grad()
             
-            if not args['use_amp16']:
-                descriptors, vars = model(images)
-                output = classifiers[current_group_num](descriptors, targets)
-                #loss = criterion1(output, targets)
-                loss_ce = ce_criterion(output, targets)
-                if args['model_mode'] == "uncertainty":
-                    # Normalize class weights to get the ground-truth "prototype" for each class
-                    weights = classifiers[current_group_num].weight
-                    norm_weights = torch.nn.functional.normalize(weights, p=2, dim=1)
-                    # Select the specific target vector for each image in the batch
-                    target_vectors = norm_weights[targets]                    
-                    # Calculate GNLL loss comparing the descriptor to its class prototype
-                    # vars is log_sigma_sq, so we exponentiate it to get variance
-                    loss_gnll = gnll_criterion(descriptors, target_vectors, torch.exp(vars))
-                    # Sum of classification loss and uncertainty estimation loss
-                    loss = loss_ce + uncertainty_lambda * loss_gnll
-                else:
-                    loss = loss_ce
-                loss.backward()
-                # epoch_losses = np.append(epoch_losses, loss.item())
-                epoch_losses.append(loss.item())
-                del loss, output, images
-                model_optimizer.step()
-                classifiers_optimizers[current_group_num].step()
-            else:  # Use AMP 16
+            # Forward pass and classifier loss (with AMP if enabled)
+            if args['use_amp16']:
                 with torch.amp.autocast("cuda"):
-                    descriptors, vars = model(images)
-                    output = classifiers[current_group_num](descriptors, targets)
-                    # loss = criterion1(output, targets)
+                    mu_norm, variance = model(images)
+                    output = classifiers[current_group_num](mu_norm, targets)
                     loss_ce = ce_criterion(output, targets)
-                    if args['model_mode'] == "uncertainty":
-                        # Normalize class weights to get the ground-truth "prototype" for each class
-                        weights = classifiers[current_group_num].weight
-                        norm_weights = torch.nn.functional.normalize(weights, p=2, dim=1)
-                        # Select the specific target vector for each image in the batch
-                        target_vectors = norm_weights[targets]                    
-                        # Calculate GNLL loss comparing the descriptor to its class prototype
-                        # vars is log_sigma_sq, so we exponentiate it to get variance
-                        loss_gnll = gnll_criterion(descriptors, target_vectors, torch.exp(vars))
-                        # Sum of classification loss and uncertainty estimation loss
-                        loss = loss_ce + uncertainty_lambda * loss_gnll
-                    else:
-                        loss = loss_ce
+            else:
+                mu_norm, variance = model(images)
+                output = classifiers[current_group_num](mu_norm, targets)
+                loss_ce = ce_criterion(output, targets)
+            
+            # Uncertainty calculations (outside autocast for stability)
+            loss = loss_ce
+            if args['model_mode'] == "uncertainty":
+                # Normalize class weights to get the ground-truth "prototype" for each class
+                weights = classifiers[current_group_num].weight
+                norm_weights = torch.nn.functional.normalize(weights, p=2, dim=1)
+                # Select the specific target vector for each image in the batch
+                target_vectors = norm_weights[targets]
+                    
+                # Calculate GNLL loss comparing the descriptor to its class prototype
+                loss_gnll = gnll_criterion(mu_norm, target_vectors, variance)
+                
+                # Calculate Pearson correlation between squared error and variance
+                squared_error = (mu_norm - target_vectors) ** 2  # [B, D]
+                # Compute correlation for each dimension and average
+                corr_list = []
+                for d in range(squared_error.shape[1]):
+                    se_d = squared_error[:, d].detach().cpu().numpy()
+                    var_d = variance[:, d].detach().cpu().numpy()
+                    if len(se_d) > 1 and np.std(se_d) > 0 and np.std(var_d) > 0:
+                        corr, _ = pearsonr(se_d, var_d)
+                        corr_list.append(corr)
+                if corr_list:
+                    uncertainty_corr = np.mean(corr_list)
+                else:
+                    uncertainty_corr = 0.0
+                epoch_corrs.append(uncertainty_corr)
+                
+                # Sum of classification loss and uncertainty estimation loss
+                loss = loss_ce + uncertainty_lambda * loss_gnll
+                epoch_losses_ce.append(loss_ce.item())
+                epoch_losses_gnll.append((uncertainty_lambda * loss_gnll).item())
+            else:
+                epoch_losses_ce.append(loss_ce.item())
+            
+            # Backward pass
+            if args['use_amp16']:
                 scaler.scale(loss).backward()
-                # epoch_losses = np.append(epoch_losses, loss.item())
-                epoch_losses.append(loss.item())
-                del loss, output, images
                 scaler.step(model_optimizer)
                 scaler.step(classifiers_optimizers[current_group_num])
                 scaler.update()
+            else:
+                loss.backward()
+                model_optimizer.step()
+                classifiers_optimizers[current_group_num].step()
+            
+            epoch_losses.append(loss.item())
+            del loss, output, images
             
             if args['dry_run']:
                 logger.info("Dry run: breaking epoch loop after one iteration")
@@ -204,8 +218,17 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         
         # logging.debug(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
         #             f"loss = {epoch_losses.mean():.4f}")
-        logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
-                    f"loss = {np.mean(epoch_losses):.4f}")
+        if args['model_mode'] == "uncertainty" and epoch_losses_gnll:
+            mean_loss_ce = np.mean(epoch_losses_ce)
+            mean_loss_gnll = np.mean(epoch_losses_gnll)
+            mean_total_loss = np.mean(epoch_losses)
+            mean_corr = np.mean(epoch_corrs) if epoch_corrs else 0.0
+            logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
+                        f"loss_total = {mean_total_loss:.4f}, loss_ce = {mean_loss_ce:.4f}, "
+                        f"loss_gnll = {mean_loss_gnll:.4f}, uncertainty_corr = {mean_corr:.4f}")
+        else:
+            logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
+                        f"loss = {np.mean(epoch_losses):.4f}")
         
         #### Evaluation
         recalls, recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)

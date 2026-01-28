@@ -1,0 +1,18 @@
+{
+  "data_folder": "/home/maya/Desktop/yoli/datasets/",
+  "local_data_folder": "datasets",
+  "logs_folder": "logs/CosPlace",
+  "datasets": "sf_xl",
+  "entries": [
+    { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" },
+    { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" },
+    { "name": "Pitts30K", "src_rel": "Pitts30K", "dst_rel": "Pitts30K" },
+    { "name": "amstertime", "src_rel": "amstertime", "dst_rel": "amstertime" }
+  ],
+  "method": "cosplace",
+  "backbone": "ResNet18",
+  "descriptors_dimension": 512,
+  "positive_dist_threshold": 25,
+  "batch_size": 8,
+  "image_size": 512
+}
