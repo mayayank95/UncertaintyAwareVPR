@@ -95,7 +95,6 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         
         # Verify resume performance
         logger.info("Verifying resumed model performance...")
-        _, resume_recalls_str = eval_dataset(args, model, device, dataset_name, val_set_folder)
         _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
         logger.info(f"Resumed model performance: {resume_recalls_str}")
     else:
