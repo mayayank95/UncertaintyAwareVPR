@@ -12,6 +12,7 @@ __pycache__/
 # Data & datasets (never commit)
 datasets/
 raw_data/
+configs/datasets.json
 
 # Training outputs
 runs/
