@@ -147,8 +147,8 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
             args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save']
         )
 
-    logger.info(f"Results for {dataset_name}: {recalls_str}")
     if args['model_mode'] == "uncertainty" and args['datasets_type'] == 'test':
+        logger.info(f"Results for {dataset_name}: {recalls_str}")
         logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}, Mean Variance: {np.mean(all_variances):.4f}")
 
     return recalls, recalls_str, uncertainty_corr
