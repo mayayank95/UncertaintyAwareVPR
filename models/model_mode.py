@@ -21,9 +21,9 @@ class GeneralModelWrapper(nn.Module):
 class Basic(GeoLocalizationNet):
     def __init__(self, opt=None):
         super().__init__(
-            backbone=getattr(opt, "backbone", "ResNet18"),
-            fc_output_dim=getattr(opt, "descriptors_dimension", 512),
-            train_all_layers=getattr(opt, "train_all_layers", False),
+            backbone=opt.get("backbone", "ResNet18"),
+            fc_output_dim=opt.get("descriptors_dimension", 512),
+            train_all_layers=opt.get("train_all_layers", False),
             uncertainty_mode=False,   # Include L2Norm as the last layer
         )
         self.id = 'basic'
@@ -37,16 +37,23 @@ class Uncertainty(GeoLocalizationNet):
     def __init__(self, opt=None):
 
         super().__init__(
-            backbone=getattr(opt, "backbone", "ResNet18"),
-            fc_output_dim=getattr(opt, "descriptors_dimension", 512),
-            train_all_layers=getattr(opt, "train_all_layers", False),
+            backbone=opt.get("backbone", "ResNet18"),
+            fc_output_dim=opt.get("descriptors_dimension", 512),
+            train_all_layers=opt.get("train_all_layers", False),
             uncertainty_mode=True,   # without l2 in the last layer
         )
         self.id = 'uncertainty'
 
-        self.var_head = nn.Sequential(
-            nn.Sigmoid()
-        )
+        if opt.get("use_variance_linear", False):
+            descriptors_dimension = opt.get("descriptors_dimension", 512)
+            self.var_head = nn.Sequential(
+                nn.Linear(descriptors_dimension, descriptors_dimension),
+                nn.Softplus()
+            )
+        else:
+            self.var_head = nn.Sequential(
+                nn.Softplus()
+            )
         self.final_l2 = L2Norm()  # L2 for mean
 
     def forward(self, inputs):

@@ -8,6 +8,8 @@ from typing import Any, Dict, Tuple, Optional, List
 import sys
 import torch
 
+from models.get_model import get_model
+
 # Create a logger for this module
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma_dim", type=int, default=None, help="dimension of the output uncertainty vector (variance)")
     p.add_argument("--uncertainty_lambda", type=float, default=1.0, help="Weight for the uncertainty loss in uncertainty mode")
     p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll or gaussian_cosine")
+    p.add_argument("--use_variance_linear", action="store_true", help="If set, adds a linear layer before the softplus in the variance head")
     return p.parse_args()  
     
 
@@ -295,6 +298,15 @@ def build_config():
         logger.info(f"resume_train: {merged.get('resume_train')}")
 
     return merged, entries
+
+def init_model(args):
+    logger.info(" ".join(sys.argv))
+    logger.info(f"The outputs are being saved in {args['log_dir']}")
+
+    model = get_model(args)
+    device = torch.device(args["device"])
+    model = model.to(device)
+    return device, model
 
 if __name__ == "__main__":
     build_config()

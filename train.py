@@ -9,12 +9,11 @@ from datetime import datetime
 import torchvision.transforms as T
 from scipy.stats import pearsonr
 
-from configs.parser import build_config
+from configs.parser import build_config, init_model
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
 from data.upload_dataset import upload_dataset
 from eval import eval_dataset
-from models.get_model import get_model
 from losses import cosface_loss
 from losses.cosface_loss import cosine_distance
 from losses.gaussian_cosine_loss import GaussianCosineLoss
@@ -25,21 +24,6 @@ from utils import augmentations, commons, util
 # It will inherit the configuration set in setup_logging within parser.py
 logger = logging.getLogger(__name__)
 torch.backends.cudnn.benchmark = True  # Provides a speedup
-
-def init(args):
-    logger.info(" ".join(sys.argv))
-    logger.info(f"Arguments: {args}")
-    logger.info(
-        f"Training with {args['method']} with a {args['backbone']} backbone and descriptors dimension {args['descriptors_dimension']}"
-    )
-    logger.info(f"The outputs are being saved in {args['log_dir']}")
-
-    #model = get_model(args['method'], args['backbone'], args['descriptors_dimension'], args.get('resume_model'), args.get('train_all_layers', False))
-    model = get_model(args)
-    device = torch.device(args["device"])
-    model = model.to(device) 
-    model.train()
-    return device, model
 
 def train(args, model, device, dataset_name, datasetsts_dir):
     start_time = datetime.now()
@@ -217,14 +201,14 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             mean_variance = np.mean(epoch_variances)
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss_total = {mean_total_loss:.4f}, loss_ce = {mean_loss_ce:.4f}, "
-                        f"loss_gnll = {mean_loss_gnll:.4f}, mean_variance = {mean_variance:.4f}")
+                        f"loss_uncertainty = {mean_loss_gnll:.4f}, mean_variance = {mean_variance:.4f}")
         else:
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         #### Evaluation
-        recalls, recalls_str, uncertainty_corr = eval_dataset(args, model, device, dataset_name, val_set_folder)
-        logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}")
+        recalls, recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {recalls_str}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
         
@@ -257,7 +241,7 @@ if __name__ == "__main__":
     # ---- Load and build config ----       
     cfg, entries = build_config()
     datasetsts_dir = upload_dataset(cfg, entries)
-    device, model = init(cfg)
+    device, model = init_model(cfg)
     for e in entries:
         logger.info(f"Training dataset: {e['name']}")
         train(cfg, model, device, e["name"], datasetsts_dir)

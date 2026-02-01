@@ -1,6 +1,5 @@
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import faiss
@@ -11,11 +10,10 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 # Local module imports
-from configs.parser import build_config
+from configs.parser import build_config, init_model
 from data.test_dataset import TestDataset
 from data.upload_dataset import upload_dataset
 from losses.cosface_loss import cosine_distance
-from models.get_model import get_model
 from utils import visualizations
 
 # Initialize Logger
@@ -28,23 +26,12 @@ def _compute_correlation(distances, variances):
         return corr
     return 0.0
 
-def init(args):
-    """Initialize device and model."""
-    logger.info(" ".join(sys.argv))
-    logger.info(f"Arguments: {args}")
-    logger.info(
-        f"Testing {args['method']} | Backbone: {args['backbone']} | Dim: {args['descriptors_dimension']}"
-    )
-    model = get_model(args)
-    device = torch.device(args["device"])
-    return device, model
-
 def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     """
     Evaluates the model on a single dataset.
     Extracts features once, then computes Recalls and Uncertainty metrics.
     """
-    model = model.eval().to(device)
+    model = model.eval()
     dataset_output_dir = Path(args['log_dir']) / dataset_name
     if not args['dry_run']:
         dataset_output_dir.mkdir(parents=True, exist_ok=True)
@@ -98,7 +85,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         db_desc = db_desc[:args['infer_batch_size']]
         q_desc = q_desc[:1]
 
-    if args.get('save_descriptors') and not args['dry_run']:
+    if args.get('save_descriptors') and not args['dry_run'] and args['datasets_type'] == 'test':
         np.save(dataset_output_dir / "queries_descriptors.npy", q_desc)
         np.save(dataset_output_dir / "database_descriptors.npy", db_desc)
 
@@ -125,14 +112,13 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
 
     # --- 3. Uncertainty Correlation (Optimized) ---
     uncertainty_corr = 0.0
-    if args['model_mode'] == "uncertainty" and args['use_labels']:
+    if args['model_mode'] == "uncertainty" and args['use_labels'] and not args['dry_run'] and args['datasets_type'] == 'test':
         logger.info("Computing uncertainty correlation metrics...")
         loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
         
         # Get query indices and their first positive ground truth from DB
         # Filter out queries with no positives
-        positives = test_ds.get_positives()
-        valid_queries = [(i, pos[0]) for i, pos in enumerate(positives) if len(pos) > 0]
+        valid_queries = [(i, pos[0]) for i, pos in enumerate(positives_per_query) if len(pos) > 0]
         
         if len(valid_queries) > 0:
             q_indices = np.array([i for i, _ in valid_queries])
@@ -162,15 +148,35 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         )
 
     logger.info(f"Results for {dataset_name}: {recalls_str}")
-    if args['model_mode'] == "uncertainty":
+    if args['model_mode'] == "uncertainty" and args['datasets_type'] == 'test':
         logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}, Mean Variance: {np.mean(all_variances):.4f}")
 
     return recalls, recalls_str, uncertainty_corr
 
 if __name__ == "__main__":
     cfg, entries = build_config()
+
+    if cfg.get("resume_model"):
+        train_dir = Path(cfg['resume_model']).parent
+        new_log_dir = train_dir / "eval"
+        new_log_dir.mkdir(parents=True, exist_ok=True)
+        cfg['log_dir'] = str(new_log_dir)
+
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                handler.close()
+                root_logger.removeHandler(handler)
+                file_name = Path(handler.baseFilename).name
+                new_handler = logging.FileHandler(new_log_dir / file_name, encoding="utf-8")
+                new_handler.setFormatter(handler.formatter)
+                new_handler.setLevel(handler.level)
+                root_logger.addHandler(new_handler)
+        
+        logger.info(f"Saving evaluation results to: {cfg['log_dir']}")
+
     datasets_paths = upload_dataset(cfg, entries)
-    device, model = init(cfg)
+    device, model = init_model(cfg)
 
     for entry in entries:
         name = entry['name']
