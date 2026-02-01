@@ -51,6 +51,8 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             uncertainty_criterion = torch.nn.GaussianNLLLoss()
         uncertainty_lambda = args.get('uncertainty_lambda', 1.0)
         logger.info(f"Using uncertainty loss: {uncertainty_loss_type}")
+        if args.get('separate_variance_aggregation'):
+            logger.info("Using separate aggregation for variance.")
     model_optimizer = torch.optim.Adam(model.parameters(), lr=args['lr'])
 
     train_set_folder = f"{datasetsts_dir[dataset_name]['train']}"

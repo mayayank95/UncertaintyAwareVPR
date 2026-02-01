@@ -100,6 +100,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--uncertainty_lambda", type=float, default=1.0, help="Weight for the uncertainty loss in uncertainty mode")
     p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll or gaussian_cosine")
     p.add_argument("--use_variance_linear", action="store_true", help="If set, adds a linear layer before the softplus in the variance head")
+    p.add_argument("--separate_variance_aggregation", action="store_true", help="If set, use a separate aggregation module (copy of mean) for variance calculation.")
     return p.parse_args()  
     
 

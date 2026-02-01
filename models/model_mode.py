@@ -1,5 +1,6 @@
 #%%
 import torch
+import copy
 import torch.nn as nn
 import torch.nn.functional as F
 from models.cosplace_uncertainty.cosplace_model.cosplace_network import GeoLocalizationNet
@@ -44,6 +45,11 @@ class Uncertainty(GeoLocalizationNet):
         )
         self.id = 'uncertainty'
 
+        self.separate_variance_aggregation = opt.get("separate_variance_aggregation", False)
+        if self.separate_variance_aggregation:
+            # Create a separate aggregation module for variance (copy of the mean aggregation)
+            self.variance_aggregation = copy.deepcopy(self.aggregation)
+
         if opt.get("use_variance_linear", False):
             descriptors_dimension = opt.get("descriptors_dimension", 512)
             self.var_head = nn.Sequential(
@@ -57,16 +63,29 @@ class Uncertainty(GeoLocalizationNet):
         self.final_l2 = L2Norm()  # L2 for mean
 
     def forward(self, inputs):
-        # super().forward --> backbone + aggregation (GeM + Flatten + Linear), without L2
-        desc = super().forward(inputs)      # shape: [B, fc_out]
+        if self.separate_variance_aggregation:
+            x = self.backbone(inputs)
+            
+            # Mean path
+            desc = self.aggregation(x)
+            mu = self.final_l2(desc)
 
-        #  mean with L2
-        mu = self.final_l2(desc)           # [B, fc_out]
+            # Variance path
+            var_desc = self.variance_aggregation(x)
+            log_sigma_sq = self.var_head(var_desc)
+            
+            return mu, log_sigma_sq
+        else:
+            # super().forward --> backbone + aggregation (GeM + Flatten + Linear), without L2
+            desc = super().forward(inputs)      # shape: [B, fc_out]
 
-        # variance without L2
-        log_sigma_sq = self.var_head(desc) # [B, sigma_dim]
+            #  mean with L2
+            mu = self.final_l2(desc)           # [B, fc_out]
 
-        return mu, log_sigma_sq
+            # variance without L2
+            log_sigma_sq = self.var_head(desc) # [B, sigma_dim]
+
+            return mu, log_sigma_sq
 
 def deliver_model(opt):
     if opt['model_mode'] == 'basic':

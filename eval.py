@@ -85,7 +85,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         db_desc = db_desc[:args['infer_batch_size']]
         q_desc = q_desc[:1]
 
-    if args.get('save_descriptors') and not args['dry_run'] and args['datasets_type'] == 'test':
+    if args.get('save_descriptors') and not args['dry_run'] and args['datasets_type'] == ['test']:
         np.save(dataset_output_dir / "queries_descriptors.npy", q_desc)
         np.save(dataset_output_dir / "database_descriptors.npy", db_desc)
 
@@ -140,15 +140,16 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
             uncertainty_corr = _compute_correlation(dists.numpy(), mean_vars.numpy())
 
     # --- 4. Visualizations ---
-    if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == 'test':
+    if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == ['test']:
         visualizations.save_preds(
             predictions[:, :args['num_preds_to_save']], 
             test_ds, str(dataset_output_dir), 
             args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save']
         )
 
-    if args['model_mode'] == "uncertainty" and args['datasets_type'] == 'test':
+    if args['datasets_type'] == ['test']:
         logger.info(f"Results for {dataset_name}: {recalls_str}")
+    if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:        
         logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}, Mean Variance: {np.mean(all_variances):.4f}")
 
     return recalls, recalls_str, uncertainty_corr
