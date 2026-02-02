@@ -107,12 +107,12 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         recalls = recalls / test_ds.num_queries * 100
         recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(args['recall_values'], recalls)])
         
-        if not args['dry_run'] and args['datasets_type'] == 'test':
+        if not args['dry_run'] and args['datasets_type'] == ['test']:
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
     # --- 3. Uncertainty Correlation (Optimized) ---
     uncertainty_corr = 0.0
-    if args['model_mode'] == "uncertainty" and args['use_labels'] and not args['dry_run'] and args['datasets_type'] == 'test':
+    if args['model_mode'] == "uncertainty" and args['use_labels'] and not args['dry_run'] and args['datasets_type'] == ['test']:
         logger.info("Computing uncertainty correlation metrics...")
         loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
         
