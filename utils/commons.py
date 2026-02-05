@@ -1,10 +1,7 @@
 
-import os
-import sys
 import torch
 import random
 import logging
-import traceback
 import numpy as np
 
 
@@ -40,3 +37,14 @@ def make_deterministic(seed: int = 0):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
+def setup_cudnn(benchmark: bool = False):
+    if benchmark:
+        # If speed is requested:
+        torch.backends.cudnn.benchmark = True 
+        torch.backends.cudnn.deterministic = False
+        logging.info("cuDNN benchmark ENABLED: Training will be FASTER but not bit-by-bit reproducible.")
+    else:
+        # If reproducibility is requested (already set to False by make_deterministic):
+        # This ensures exact results if the same seed is used
+        logging.info("cuDNN benchmark DISABLED: Training will be bit-by-bit DETERMINISTIC (Slower).")

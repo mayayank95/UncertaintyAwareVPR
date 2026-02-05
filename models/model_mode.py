@@ -5,8 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.cosplace_uncertainty.cosplace_model.cosplace_network import GeoLocalizationNet
 from models.cosplace_uncertainty.cosplace_model.layers import L2Norm
-#from cosplace_model.cosplace_network import GeoLocalizationNet
-#from cosplace_model.layers import L2Norm
+
 
 class GeneralModelWrapper(nn.Module):
     def __init__(self, model):

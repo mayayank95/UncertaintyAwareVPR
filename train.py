@@ -27,17 +27,6 @@ torch.backends.cudnn.benchmark = True  # Provides a speedup
 
 def train(args, model, device, dataset_name, datasetsts_dir):
     start_time = datetime.now()
-    commons.make_deterministic(args['seed'])
-    # Handle the cuDNN Benchmark speed/reproducibility trade-off
-    if args['cudnn_benchmark']:
-        # If speed is requested:
-        torch.backends.cudnn.benchmark = True 
-        torch.backends.cudnn.deterministic = False
-        logger.info("cuDNN benchmark ENABLED: Training will be FASTER but not bit-by-bit reproducible.")
-    else:
-        # If reproducibility is requested (already set to False by make_deterministic):
-        # This ensures exact results if the same seed is used
-        logger.info("cuDNN benchmark DISABLED: Training will be bit-by-bit DETERMINISTIC (Slower).")
 
     logger.info(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
 
@@ -127,7 +116,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         dataloader_iterator = iter(dataloader)
         model = model.train()
         
-        epoch_losses = []#np.zeros((0, 1), dtype=np.float32)
+        epoch_losses = []
         epoch_losses_ce = []
         epoch_losses_gnll = []
         epoch_variances = []
@@ -194,8 +183,6 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         classifiers[current_group_num] = classifiers[current_group_num].cpu()
         util.move_to_device(classifiers_optimizers[current_group_num], "cpu")
         
-        # logging.debug(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
-        #             f"loss = {epoch_losses.mean():.4f}")
         if args['model_mode'] == "uncertainty" and epoch_losses_gnll:
             mean_loss_ce = np.mean(epoch_losses_ce)
             mean_loss_gnll = np.mean(epoch_losses_gnll)
@@ -243,6 +230,9 @@ if __name__ == "__main__":
     # ---- Load and build config ----       
     cfg, entries = build_config()
     datasetsts_dir = upload_dataset(cfg, entries)
+    commons.make_deterministic(cfg['seed'])
+    # Handle the cuDNN Benchmark speed/reproducibility trade-off
+    commons.setup_cudnn(cfg['cudnn_benchmark'])
     device, model = init_model(cfg)
     for e in entries:
         logger.info(f"Training dataset: {e['name']}")

@@ -7,10 +7,8 @@ from models.model_mode import deliver_model, GeneralModelWrapper
 
 logger = logging.getLogger(__name__)
 
-#def get_model(method, backbone=None, descriptors_dimension=None, resume_model=None, train_all_layers=False):
 def get_model(args):
     if args['method'] == "cosplace":
-        # model = cosplace_network.GeoLocalizationNet(backbone, descriptors_dimension, train_all_layers)
         model = deliver_model(args)
     elif args['method'] == "cosplace_pretrained":
         logger.info(f"Loading pretrained model from torch.hub: backbone={args['backbone']}, dim={args['descriptors_dimension']}")
