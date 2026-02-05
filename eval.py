@@ -6,7 +6,6 @@ from pathlib import Path
 import faiss
 import numpy as np
 import torch
-from scipy.stats import pearsonr
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
@@ -14,18 +13,11 @@ from tqdm import tqdm
 from configs.parser import build_config, init_model
 from data.test_dataset import TestDataset
 from data.upload_dataset import upload_dataset
-from losses.cosface_loss import cosine_distance
-from utils import visualizations
+from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
+from eval_metrics import visualizations
 
 # Initialize Logger
 logger = logging.getLogger(__name__)
-
-def _compute_correlation(distances, variances):
-    """Compute Pearson correlation between distances and variances."""
-    if len(distances) > 1 and np.std(distances) > 0 and np.std(variances) > 0:
-        corr, _ = pearsonr(distances, variances)
-        return corr
-    return 0.0
 
 def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     """
@@ -48,8 +40,13 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
 
     # --- 1. Combined Descriptor & Variance Extraction ---
     # We store both to avoid re-running the model for uncertainty calculations
-    all_descriptors = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
-    all_variances = np.empty((len(test_ds), args['descriptors_dimension']), dtype="float32")
+    all_descriptors = np.zeros((len(test_ds), args['descriptors_dimension']), dtype="float32")
+    all_variances = np.zeros((len(test_ds), args['descriptors_dimension']), dtype="float32")
+
+    if args['dry_run']:
+        logger.info("Dry run enabled: Generating random descriptors/variances to test correlation pipeline.")
+        all_descriptors = np.random.randn(len(test_ds), args['descriptors_dimension']).astype("float32")
+        all_variances = np.abs(np.random.randn(len(test_ds), args['descriptors_dimension']).astype("float32"))
 
     with torch.inference_mode():
         # Database extraction
@@ -97,6 +94,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
 
     recalls_str = "Labels not available"
     recalls = np.zeros(len(args['recall_values']))
+    positives_per_query = None
 
     if args['use_labels']:
         positives_per_query = test_ds.get_positives()
@@ -112,33 +110,9 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
     # --- 3. Uncertainty Correlation (Optimized) ---
-    uncertainty_corr = 0.0
-    if args['model_mode'] == "uncertainty" and args['use_labels'] and not args['dry_run'] and args['datasets_type'] == ['test']:
-        logger.info("Computing uncertainty correlation metrics...")
-        loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
-        
-        # Get query indices and their first positive ground truth from DB
-        # Filter out queries with no positives
-        valid_queries = [(i, pos[0]) for i, pos in enumerate(positives_per_query) if len(pos) > 0]
-        
-        if len(valid_queries) > 0:
-            q_indices = np.array([i for i, _ in valid_queries])
-            db_gt_indices = np.array([idx for _, idx in valid_queries])
-            
-            # Convert to tensors for normalization/distance math
-            q_tensor = torch.from_numpy(all_descriptors[test_ds.num_database + q_indices])
-            db_tensor = torch.from_numpy(all_descriptors[db_gt_indices])
-            q_var_tensor = torch.from_numpy(all_variances[test_ds.num_database + q_indices])
-
-            q_norm = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
-            db_norm = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
-
-            if loss_type == 'gaussian_cosine':
-                dists = cosine_distance(q_norm, db_norm)
-            else:
-                dists = torch.sum((q_norm - db_norm) ** 2, dim=-1)      
-            mean_vars = torch.mean(q_var_tensor, dim=-1)
-            uncertainty_corr = _compute_correlation(dists.numpy(), mean_vars.numpy())
+    uncertainty_corr = compute_uncertainty_correlation(
+        args, all_descriptors, all_variances, positives_per_query, test_ds.num_database
+    )
 
     # --- 4. Visualizations ---
     if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == ['test']:
@@ -151,10 +125,8 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     if args['datasets_type'] == ['test']:
         logger.info(f"Results for {dataset_name}: {recalls_str}")
     if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:        
-        logger.info(
-            f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}, "
-            f"Variance (Mean: {np.mean(all_variances):.4e}, Min: {np.min(all_variances):.4e}, Max: {np.max(all_variances):.4e})"
-        )
+        logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")
+        compute_uncertainty_statistics(all_variances, dataset_output_dir if not args['dry_run'] else None)
 
     return recalls, recalls_str, uncertainty_corr
 
@@ -165,7 +137,8 @@ if __name__ == "__main__":
         old_log_dir = Path(cfg['log_dir'])
         train_dir = Path(cfg['resume_model']).parent
         new_log_dir = train_dir / "eval"
-        new_log_dir.mkdir(parents=True, exist_ok=True)
+        if not cfg['dry_run']:
+            new_log_dir.mkdir(parents=True, exist_ok=True)
         cfg['log_dir'] = str(new_log_dir)
 
         root_logger = logging.getLogger()

@@ -7,7 +7,6 @@ from tqdm import tqdm
 import multiprocessing
 from datetime import datetime
 import torchvision.transforms as T
-from scipy.stats import pearsonr
 
 from configs.parser import build_config, init_model
 from data.test_dataset import TestDataset
