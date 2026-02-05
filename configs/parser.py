@@ -277,7 +277,7 @@ def build_config():
 
     # Optional save merged config
     if merged.get("save_config"):
-        outp = f"{log_dir}/merged_config.json"
+        outp = f"{log_dir}/eval/merged_config.json"
         # Save merged config to specified path  
         outp = Path(outp).expanduser()  
         outp.parent.mkdir(parents=True, exist_ok=True)      

@@ -189,22 +189,6 @@ if __name__ == "__main__":
         
         logger.info(f"Saving evaluation results to: {cfg['log_dir']}")
 
-        if cfg.get("save_config"):
-            old_config = old_log_dir / "merged_config.json"
-            new_config = new_log_dir / "merged_config.json"
-            if old_config.exists():
-                old_config.rename(new_config)
-                logger.info(f"Moved merged config to {new_config}")
-            else:
-                new_config.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-                logger.info(f"Saved merged config to {new_config}")
-
-        # Cleanup empty timestamp folder
-        try:
-            old_log_dir.rmdir()
-        except OSError:
-            pass
-
     datasets_paths = upload_dataset(cfg, entries)
     device, model = init_model(cfg)
 
