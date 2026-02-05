@@ -1,5 +1,7 @@
 import logging
 import sys
+
+import json
 from pathlib import Path
 
 import faiss
@@ -150,7 +152,10 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     if args['datasets_type'] == ['test']:
         logger.info(f"Results for {dataset_name}: {recalls_str}")
     if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:        
-        logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}, Mean Variance: {np.mean(all_variances):.4f}")
+        logger.info(
+            f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}, "
+            f"Variance (Mean: {np.mean(all_variances):.4e}, Min: {np.min(all_variances):.4e}, Max: {np.max(all_variances):.4e})"
+        )
 
     return recalls, recalls_str, uncertainty_corr
 
@@ -158,6 +163,7 @@ if __name__ == "__main__":
     cfg, entries = build_config()
 
     if cfg.get("resume_model"):
+        old_log_dir = Path(cfg['log_dir'])
         train_dir = Path(cfg['resume_model']).parent
         new_log_dir = train_dir / "eval"
         new_log_dir.mkdir(parents=True, exist_ok=True)
@@ -170,11 +176,35 @@ if __name__ == "__main__":
                 root_logger.removeHandler(handler)
                 file_name = Path(handler.baseFilename).name
                 new_handler = logging.FileHandler(new_log_dir / file_name, encoding="utf-8")
+                
+                # Move existing log file to new directory
+                old_file = old_log_dir / file_name
+                new_file = new_log_dir / file_name
+                if old_file.exists():
+                    old_file.rename(new_file)
+
+                new_handler = logging.FileHandler(new_file, encoding="utf-8")
                 new_handler.setFormatter(handler.formatter)
                 new_handler.setLevel(handler.level)
                 root_logger.addHandler(new_handler)
         
         logger.info(f"Saving evaluation results to: {cfg['log_dir']}")
+
+        if cfg.get("save_config"):
+            old_config = old_log_dir / "merged_config.json"
+            new_config = new_log_dir / "merged_config.json"
+            if old_config.exists():
+                old_config.rename(new_config)
+                logger.info(f"Moved merged config to {new_config}")
+            else:
+                new_config.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+                logger.info(f"Saved merged config to {new_config}")
+
+        # Cleanup empty timestamp folder
+        try:
+            old_log_dir.rmdir()
+        except OSError:
+            pass
 
     datasets_paths = upload_dataset(cfg, entries)
     device, model = init_model(cfg)
