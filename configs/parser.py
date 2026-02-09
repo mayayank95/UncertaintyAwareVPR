@@ -133,7 +133,7 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(merged)
 
     # Paths: store as strings in config, but normalize to expanded string paths
-    for k in ("data_folder", "local_data_folder", "logs_folder"): # added logs_folder to normalization
+    for k in ("data_folder", "local_data_folder", "logs_folder", "resume_train", "resume_model"):
         if k in out and out[k] is not None:
             out[k] = str(Path(out[k]).expanduser())
 
@@ -156,13 +156,7 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-import logging
-import sys
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
-
-def setup_logging(logs_folder: Optional[str], dry_run: bool = False):
+def setup_logging(logs_folder: Optional[str], dry_run: bool = False, resume_checkpoint: Optional[str] = None, resume_model: Optional[str] = None):
     """
     Configures a unified logging system:
     - Console: Shows clean INFO messages.
@@ -184,10 +178,22 @@ def setup_logging(logs_folder: Optional[str], dry_run: bool = False):
     handlers.append(console_handler)
 
     log_dir = None
-    # Create a unique timestamped folder for this specific run
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_dir = Path(logs_folder) / timestamp
-    if logs_folder and not dry_run:
+    
+    if resume_checkpoint:
+        resume_path = Path(resume_checkpoint)
+        if resume_path.exists():
+            log_dir = resume_path.parent
+    elif resume_model:
+        resume_path = Path(resume_model)
+        if resume_path.exists():
+            log_dir = resume_path.parent / "eval"
+
+    if log_dir is None and logs_folder:
+        # Create a unique timestamped folder for this specific run
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_dir = Path(logs_folder) / timestamp
+
+    if log_dir and not dry_run:
         log_dir.mkdir(parents=True, exist_ok=True)
 
         # Detailed formatter for files (includes full date and time)
@@ -257,7 +263,10 @@ def build_config():
     merged = normalize(merged)
 
     # Initialize the logging system
-    log_dir = setup_logging(merged.get("logs_folder"), dry_run=merged.get("dry_run", False))
+    log_dir = setup_logging(merged.get("logs_folder"), 
+                            dry_run=merged.get("dry_run", False), 
+                            resume_checkpoint=merged.get("resume_train"),
+                            resume_model=merged.get("resume_model"))
     merged['log_dir'] = str(log_dir) if log_dir else None # Ensure logs_folder is set to the actual log_dir used
 
     # REQUIRED config fields
@@ -277,11 +286,10 @@ def build_config():
     entries = select_entries(entries, merged.get("datasets", None))
 
     # Optional save merged config
-    if merged.get("save_config"):
-        outp = f"{log_dir}/eval/merged_config.json"
+    if merged.get("save_config") and log_dir and not merged.get("dry_run"):
+        outp = log_dir / "merged_config.json"
         # Save merged config to specified path  
         outp = Path(outp).expanduser()  
-        outp.parent.mkdir(parents=True, exist_ok=True)      
         outp.write_text(json.dumps(merged, indent=2), encoding="utf-8")
         logger.info(f"Saved merged config to {outp}")
 

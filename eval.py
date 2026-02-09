@@ -133,35 +133,6 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
 if __name__ == "__main__":
     cfg, entries = build_config()
 
-    if cfg.get("resume_model"):
-        old_log_dir = Path(cfg['log_dir'])
-        train_dir = Path(cfg['resume_model']).parent
-        new_log_dir = train_dir / "eval"
-        if not cfg['dry_run']:
-            new_log_dir.mkdir(parents=True, exist_ok=True)
-        cfg['log_dir'] = str(new_log_dir)
-
-        root_logger = logging.getLogger()
-        for handler in root_logger.handlers[:]:
-            if isinstance(handler, logging.FileHandler):
-                handler.close()
-                root_logger.removeHandler(handler)
-                file_name = Path(handler.baseFilename).name
-                new_handler = logging.FileHandler(new_log_dir / file_name, encoding="utf-8")
-                
-                # Move existing log file to new directory
-                old_file = old_log_dir / file_name
-                new_file = new_log_dir / file_name
-                if old_file.exists():
-                    old_file.rename(new_file)
-
-                new_handler = logging.FileHandler(new_file, encoding="utf-8")
-                new_handler.setFormatter(handler.formatter)
-                new_handler.setLevel(handler.level)
-                root_logger.addHandler(new_handler)
-        
-        logger.info(f"Saving evaluation results to: {cfg['log_dir']}")
-
     datasets_paths = upload_dataset(cfg, entries)
     device, model = init_model(cfg)
 

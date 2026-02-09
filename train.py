@@ -7,6 +7,7 @@ from tqdm import tqdm
 import multiprocessing
 from datetime import datetime
 import torchvision.transforms as T
+from pathlib import Path
 
 from configs.parser import build_config, init_model
 from data.test_dataset import TestDataset
@@ -28,6 +29,8 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     start_time = datetime.now()
 
     logger.info(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
+    if torch.cuda.is_available():
+        logger.info(f"GPU type: {torch.cuda.get_device_name(0)}")
 
     #### Optimizer
     ce_criterion = torch.nn.CrossEntropyLoss()
@@ -228,6 +231,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
 if __name__ == "__main__":
     # ---- Load and build config ----       
     cfg, entries = build_config()
+
     datasetsts_dir = upload_dataset(cfg, entries)
     commons.make_deterministic(cfg['seed'])
     # Handle the cuDNN Benchmark speed/reproducibility trade-off
