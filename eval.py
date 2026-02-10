@@ -35,6 +35,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         positive_dist_threshold=args['positive_dist_threshold'],
         image_size=args.get('image_size'),
         use_labels=args['use_labels'],
+        resize_test_imgs=args.get('resize_test_imgs', False),
     )
     logger.info(f"{'='*30}\nTesting on {test_ds}")
 
@@ -110,10 +111,11 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
     # --- 3. Uncertainty Correlation (Optimized) ---
-    uncertainty_corr = compute_uncertainty_correlation(
-        args, all_descriptors, all_variances, positives_per_query, test_ds.num_database
-    )
-
+    uncertainty_corr = None
+    if args['model_mode'] == "uncertainty":
+        uncertainty_corr = compute_uncertainty_correlation(
+            args, all_descriptors, all_variances, positives_per_query, test_ds.num_database
+        )
     # --- 4. Visualizations ---
     if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == ['test']:
         visualizations.save_preds(
@@ -126,6 +128,9 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         logger.info(f"Results for {dataset_name}: {recalls_str}")
     if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:        
         logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")
+    if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:
+        if uncertainty_corr is not None:
+            logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")
         compute_uncertainty_statistics(all_variances, dataset_output_dir if not args['dry_run'] else None)
 
     return recalls, recalls_str, uncertainty_corr

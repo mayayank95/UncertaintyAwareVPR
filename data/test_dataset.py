@@ -22,6 +22,10 @@ class TestDataset(data.Dataset):
         """
         super().__init__()
 
+        if "msls" in database_folder.lower() and image_size is not None:
+            resize_test_imgs = True
+            logger.info("Forcing resize_test_imgs=True for MSLS dataset")
+
         self.database_paths = read_images_paths(database_folder)
         self.queries_paths = read_images_paths(queries_folder)
 
@@ -63,11 +67,12 @@ class TestDataset(data.Dataset):
 
         transformations = []
         if resize_test_imgs:
-            transformations.append(transforms.Resize(size=image_size, antialias=True))
-        transformations = [
+            transformations.append(transforms.Resize(size=(image_size, image_size), antialias=True))
+        transformations.extend([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
+        ])
+
         self.transform = transforms.Compose(transformations)
 
     def __getitem__(self, index):
