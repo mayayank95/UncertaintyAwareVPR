@@ -17,5 +17,5 @@
   "positive_dist_threshold": 25,
   "batch_size": 32,
   "image_size": 512,
-  "uncertainty_loss": "gaussian_cosine"
+  "uncertainty_loss": "gaussian_nll"
 }
