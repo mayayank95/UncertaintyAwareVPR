@@ -5,6 +5,7 @@ import logging
 from typing import Type, List
 from argparse import Namespace
 from losses.cosface_loss import MarginCosineProduct
+from pathlib import Path
 
 
 def move_to_device(optimizer: Type[torch.optim.Optimizer], device: str):
@@ -55,6 +56,9 @@ def resume_train(device: str, args: Namespace, output_folder: str, model: torch.
     best_val_recall1 = checkpoint["best_val_recall1"]
     
     # Copy best model to current output_folder
-    shutil.copy(args['resume_train'].replace("last_checkpoint.pth", "best_model.pth"), output_folder)
+    best_model_source_path = Path(args['resume_train']).parent / "best_model.pth"
+    if best_model_source_path.exists():
+        shutil.copy(best_model_source_path, output_folder)
+        logging.info(f"Copied best model from previous run to {output_folder}")
     
     return model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num

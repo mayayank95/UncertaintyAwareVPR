@@ -182,11 +182,18 @@ def setup_logging(logs_folder: Optional[str], dry_run: bool = False, resume_chec
     if resume_checkpoint:
         resume_path = Path(resume_checkpoint)
         if resume_path.exists():
-            log_dir = resume_path.parent
+            original_log_dir = resume_path.parent
+            timestamp = datetime.now().strftime("resume_%Y-%m-%d_%H-%M-%S")
+            log_dir = original_log_dir / timestamp
     elif resume_model:
         resume_path = Path(resume_model)
         if resume_path.exists():
-            log_dir = resume_path.parent / "eval"
+            original_log_dir = resume_path.parent
+            if "train" in Path(sys.argv[0]).name:
+                timestamp = datetime.now().strftime("resume_model_%Y-%m-%d_%H-%M-%S")
+            else:
+                timestamp = datetime.now().strftime("eval_%Y-%m-%d_%H-%M-%S")
+            log_dir = original_log_dir / timestamp
 
     if log_dir is None and logs_folder:
         # Create a unique timestamped folder for this specific run

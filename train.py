@@ -7,6 +7,7 @@ from tqdm import tqdm
 import multiprocessing
 from datetime import datetime
 import torchvision.transforms as T
+import shutil
 from pathlib import Path
 
 from configs.parser import build_config, init_model
@@ -237,6 +238,13 @@ if __name__ == "__main__":
     # Handle the cuDNN Benchmark speed/reproducibility trade-off
     commons.setup_cudnn(cfg['cudnn_benchmark'])
     device, model = init_model(cfg)
+
+    if cfg.get('resume_model'):
+        src = Path(cfg['resume_model'])
+        if src.exists():
+            shutil.copy(src, cfg['log_dir'])
+            logger.info(f"Copied resume model from {src} to {cfg['log_dir']}")
+
     for e in entries:
         logger.info(f"Training dataset: {e['name']}")
         train(cfg, model, device, e["name"], datasetsts_dir)
