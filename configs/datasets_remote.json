@@ -2,7 +2,7 @@
   "data_folder": "/home/maya/Desktop/yoli/datasets/",
   "local_data_folder": "datasets",
   "logs_folder": "logs/CosPlace",
-  "datasets": "sf_xl,Pitts30K,amstertime,st_lucia,nordland,msls-val",
+  "datasets": "sf_xl,Pitts30K,amstertime,nordland,msls-val",
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" },
     { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" },
