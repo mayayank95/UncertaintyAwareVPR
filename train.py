@@ -103,6 +103,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     patience = args.get('patience', 5)
     not_improved_count = 0
 
+    mean_variances_history = []
     for epoch_num in range(start_epoch_num, args['epochs_num']):
         
         #### Train
@@ -191,6 +192,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             mean_loss_gnll = np.mean(epoch_losses_gnll)
             mean_total_loss = np.mean(epoch_losses)
             mean_variance = np.mean(epoch_variances)
+            mean_variances_history.append(mean_variance)
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss_total = {mean_total_loss:.4f}, loss_ce = {mean_loss_ce:.4f}, "
                         f"loss_uncertainty = {mean_loss_gnll:.4f}, mean_variance = {mean_variance:.4f}")
@@ -225,6 +227,9 @@ def train(args, model, device, dataset_name, datasetsts_dir):
 
         if args['dry_run']:
             break
+
+    if mean_variances_history:
+        logger.info(f"Mean variance evolution: start={mean_variances_history[0]:.4f}, end={mean_variances_history[-1]:.4f}")
 
     logger.info(f"Trained for {epoch_num+1:02d} epochs, in total in {str(datetime.now() - start_time)[:-7]}")
     logger.info("Experiment finished (without any errors)")
