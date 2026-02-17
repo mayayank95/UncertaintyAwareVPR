@@ -101,7 +101,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll or gaussian_cosine")
     p.add_argument("--use_variance_linear", action="store_true", help="If set, adds a linear layer before the softplus in the variance head")
     p.add_argument("--separate_variance_aggregation", action="store_true", help="If set, use a separate aggregation module (copy of mean) for variance calculation.")
-    p.add_argument("--uncertainty_max_queries", type=int, default=30, help="Max number of queries to use for uncertainty correlation calculation.")
     return p.parse_args()  
     
 
@@ -183,7 +182,7 @@ def setup_logging(logs_folder: Optional[str], dry_run: bool = False, resume_chec
         resume_path = Path(resume_checkpoint)
         if resume_path.exists():
             original_log_dir = resume_path.parent
-            timestamp = datetime.now().strftime("resume_%Y-%m-%d_%H-%M-%S")
+            timestamp = datetime.now().strftime("resume_train_%Y-%m-%d_%H-%M-%S")
             log_dir = original_log_dir / timestamp
     elif resume_model:
         resume_path = Path(resume_model)
@@ -191,7 +190,7 @@ def setup_logging(logs_folder: Optional[str], dry_run: bool = False, resume_chec
             original_log_dir = resume_path.parent
             if "train" in Path(sys.argv[0]).name:
                 timestamp = datetime.now().strftime("resume_model_%Y-%m-%d_%H-%M-%S")
-            else:
+            else:  # This is for eval.py
                 timestamp = datetime.now().strftime("eval_%Y-%m-%d_%H-%M-%S")
             log_dir = original_log_dir / timestamp
 

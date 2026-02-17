@@ -32,12 +32,6 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
         valid_queries = [(i, pos[0]) for i, pos in enumerate(positives_per_query) if len(pos) > 0]
         
         if len(valid_queries) > 0:
-            max_queries = args.get('uncertainty_max_queries', 30)
-            if len(valid_queries) > max_queries:
-                logger.info(f"Subsampling uncertainty correlation: using {max_queries} out of {len(valid_queries)} queries.")
-                subset_indices = np.random.choice(len(valid_queries), max_queries, replace=False)
-                valid_queries = [valid_queries[i] for i in subset_indices]
-
             q_indices = np.array([i for i, _ in valid_queries])
             db_gt_indices = np.array([idx for _, idx in valid_queries])
             

@@ -2,6 +2,7 @@ import logging
 
 import json
 from pathlib import Path
+import shutil
 
 import faiss
 import numpy as np
@@ -140,6 +141,12 @@ if __name__ == "__main__":
 
     datasets_paths = upload_dataset(cfg, entries)
     device, model = init_model(cfg)
+
+    if cfg.get('resume_model'):
+        src = Path(cfg['resume_model'])
+        if src.exists():
+            shutil.copy(src, cfg['log_dir'])
+            logger.info(f"Copied resume model from {src} to {cfg['log_dir']}")
 
     for entry in entries:
         name = entry['name']
