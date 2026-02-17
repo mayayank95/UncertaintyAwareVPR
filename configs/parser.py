@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
                         help="path to checkpoint to resume, e.g. logs/.../last_checkpoint.pth")
     p.add_argument("--resume_model", type=str, default=None,
                         help="path to model to resume, e.g. logs/.../best_model.pth")
+    p.add_argument("--load_classifiers", action="store_true", help="If set, load classifier weights from the resume_model checkpoint.")
                         
     # IMPORTANT: tri-state booleans so config merging works:
     # - if not provided => False
@@ -77,6 +78,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--iterations_per_epoch", type=int, default=10000, help="_")
     p.add_argument("--epochs_num", type=int, default=50, help="_")
     p.add_argument("--patience", type=int, default=5, help="Patience for early stopping (epochs without improvement)")
+    p.add_argument("--losses", type=str, nargs="+", default=None, help="List of losses to use (e.g. 'ce', 'uncertainty').")
 
     # Data augmentation
     p.add_argument("--augmentation_device", type=str, default="cuda", choices=["cuda", "cpu"], help="on which device to run data augmentation")

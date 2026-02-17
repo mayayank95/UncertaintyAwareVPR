@@ -33,6 +33,22 @@ def resume_train(device: str, args: Namespace, output_folder: str, model: torch.
     """Load model, optimizer, and other training parameters"""
     logging.info(f"Loading checkpoint: {args['resume_train']}")
     checkpoint = torch.load(args['resume_train'], map_location='cpu', weights_only=False)
+    
+    if args.get('load_classifiers'):
+        logging.info("Loading ONLY classifier weights from checkpoint.")
+        if "classifiers_state_dict" in checkpoint:
+            if len(checkpoint["classifiers_state_dict"]) == len(classifiers):
+                for c, sd in zip(classifiers, checkpoint["classifiers_state_dict"]):
+                    c = c.to(device)
+                    c.load_state_dict(sd)
+                    c = c.cpu()
+                logging.info("Classifiers weights loaded successfully.")
+            else:
+                logging.warning(f"Skipping classifiers load: Checkpoint has {len(checkpoint['classifiers_state_dict'])} classifiers, config has {len(classifiers)}.")
+        else:
+            logging.warning("No classifiers_state_dict found in checkpoint.")
+        return model, model_optimizer, classifiers, classifiers_optimizers, 0, 0
+
     start_epoch_num = checkpoint["epoch_num"]
     
     model_state_dict = checkpoint["model_state_dict"]

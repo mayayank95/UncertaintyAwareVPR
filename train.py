@@ -34,8 +34,18 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         logger.info(f"GPU type: {torch.cuda.get_device_name(0)}")
 
     #### Optimizer
-    ce_criterion = torch.nn.CrossEntropyLoss()
-    if args['model_mode'] == "uncertainty":
+    active_losses = args['losses']
+    if active_losses is None:
+        if args['model_mode'] == "uncertainty":
+            active_losses = ["ce", "uncertainty"]
+        else:
+            active_losses = ["ce"]
+    logger.info(f"Active losses: {active_losses}")
+
+    if "ce" in active_losses:
+        ce_criterion = torch.nn.CrossEntropyLoss()
+    
+    if "uncertainty" in active_losses and args['model_mode'] == "uncertainty":
         uncertainty_loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
         if uncertainty_loss_type == 'gaussian_cosine':
             uncertainty_criterion = GaussianCosineLoss()
@@ -68,10 +78,32 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     if args.get('resume_train') is not None:
         model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num = \
             util.resume_train(device, args, args['log_dir'], model, model_optimizer, classifiers, classifiers_optimizers)
-        epoch_num = start_epoch_num - 1
-        logger.info(f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}")
         
-        # Verify resume performance
+        if not args.get('load_classifiers'):
+            epoch_num = start_epoch_num - 1
+            logger.info(f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}")
+            
+            # Verify resume performance
+            logger.info("Verifying resumed model performance...")
+            _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
+            logger.info(f"Resumed model performance: {resume_recalls_str}")
+    elif args.get('load_classifiers'):
+        best_val_recall1 = start_epoch_num = 0
+        resume_path = args['resume_model'] if args.get('resume_model') is not None else args['resume_train']
+        logger.info(f"Loading ONLY classifier weights from {resume_path}")
+        checkpoint = torch.load(resume_path, map_location='cpu')
+        if isinstance(checkpoint, dict) and "classifiers_state_dict" in checkpoint:
+            if len(checkpoint["classifiers_state_dict"]) == len(classifiers):
+                for c, sd in zip(classifiers, checkpoint["classifiers_state_dict"]):
+                    c.load_state_dict(sd)
+                logger.info("Classifiers weights loaded successfully.")
+            else:
+                logger.warning(f"Skipping classifiers load: Checkpoint has {len(checkpoint['classifiers_state_dict'])} classifiers, config has {len(classifiers)}.")
+        else:
+            logger.warning("No classifiers_state_dict found in checkpoint.")
+    elif args.get('resume_model') is not None:
+        best_val_recall1 = start_epoch_num = 0
+        logger.info(f"Resuming from model {args['resume_model']}")
         logger.info("Verifying resumed model performance...")
         _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
         logger.info(f"Resumed model performance: {resume_recalls_str}")
@@ -135,20 +167,25 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             model_optimizer.zero_grad()
             classifiers_optimizers[current_group_num].zero_grad()
             
+            loss = torch.tensor(0.0, device=device)
+
             # Forward pass and classifier loss (with AMP if enabled)
             if args['use_amp16']:
                 with torch.amp.autocast("cuda"):
                     mu_norm, variance = model(images)
-                    output = classifiers[current_group_num](mu_norm, targets)
-                    loss_ce = ce_criterion(output, targets)
+                    if "ce" in active_losses:
+                        output = classifiers[current_group_num](mu_norm, targets)
+                        loss_ce = ce_criterion(output, targets)
+                        loss = loss + loss_ce
             else:
                 mu_norm, variance = model(images)
-                output = classifiers[current_group_num](mu_norm, targets)
-                loss_ce = ce_criterion(output, targets)
+                if "ce" in active_losses:
+                    output = classifiers[current_group_num](mu_norm, targets)
+                    loss_ce = ce_criterion(output, targets)
+                    loss = loss + loss_ce
             
             # Uncertainty calculations (outside autocast for stability)
-            loss = loss_ce
-            if args['model_mode'] == "uncertainty":
+            if "uncertainty" in active_losses and args['model_mode'] == "uncertainty":
                 # Normalize class weights to get the ground-truth "prototype" for each class
                 weights = classifiers[current_group_num].weight
                 norm_weights = torch.nn.functional.normalize(weights, p=2, dim=1)
@@ -159,11 +196,13 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                 loss_uncertainty = uncertainty_criterion(mu_norm, target_vectors, variance)
                 
                 # Sum of classification loss and uncertainty estimation loss
-                loss = loss_ce + uncertainty_lambda * loss_uncertainty
-                epoch_losses_ce.append(loss_ce.item())
+                loss = loss + uncertainty_lambda * loss_uncertainty
                 epoch_losses_gnll.append((uncertainty_lambda * loss_uncertainty).item())
+            
+            if args['model_mode'] == "uncertainty":
                 epoch_variances.append(variance.mean().item())
-            else:
+
+            if "ce" in active_losses:
                 epoch_losses_ce.append(loss_ce.item())
             
             # Backward pass
@@ -178,7 +217,10 @@ def train(args, model, device, dataset_name, datasetsts_dir):
                 classifiers_optimizers[current_group_num].step()
             
             epoch_losses.append(loss.item())
-            del loss, output, images
+            del loss
+            if "ce" in active_losses:
+                del output
+            del images
             
             if args['dry_run']:
                 logger.info("Dry run: breaking epoch loop after one iteration")
@@ -187,15 +229,18 @@ def train(args, model, device, dataset_name, datasetsts_dir):
         classifiers[current_group_num] = classifiers[current_group_num].cpu()
         util.move_to_device(classifiers_optimizers[current_group_num], "cpu")
         
-        if args['model_mode'] == "uncertainty" and epoch_losses_gnll:
-            mean_loss_ce = np.mean(epoch_losses_ce)
-            mean_loss_gnll = np.mean(epoch_losses_gnll)
+        if args['model_mode'] == "uncertainty":
             mean_total_loss = np.mean(epoch_losses)
             mean_variance = np.mean(epoch_variances)
             mean_variances_history.append(mean_variance)
-            logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
-                        f"loss_total = {mean_total_loss:.4f}, loss_ce = {mean_loss_ce:.4f}, "
-                        f"loss_uncertainty = {mean_loss_gnll:.4f}, mean_variance = {mean_variance:.4f}")
+            
+            log_msg = f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, loss_total = {mean_total_loss:.4f}"
+            if "ce" in active_losses:
+                log_msg += f", loss_ce = {np.mean(epoch_losses_ce):.4f}"
+            if "uncertainty" in active_losses:
+                log_msg += f", loss_uncertainty = {np.mean(epoch_losses_gnll):.4f}"
+            log_msg += f", mean_variance = {mean_variance:.4f}"
+            logger.info(log_msg)
         else:
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss = {np.mean(epoch_losses):.4f}")
