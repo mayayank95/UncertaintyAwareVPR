@@ -16,7 +16,11 @@ def get_model(args):
         model = GeneralModelWrapper(model)
     if args.get('resume_model') is not None:
         logger.info(f"Loading model from {args['resume_model']}")
-        model_state_dict = torch.load(args['resume_model'], map_location='cpu')
+        checkpoint = torch.load(args['resume_model'], map_location='cpu')
+        if "model_state_dict" in checkpoint:
+            model_state_dict = checkpoint["model_state_dict"]
+        else:
+            model_state_dict = checkpoint
         model.load_state_dict(model_state_dict)
     elif args['method'] != "cosplace_pretrained":
         logger.info("No --resume_model provided. Initializing model with default weights (ImageNet).")
