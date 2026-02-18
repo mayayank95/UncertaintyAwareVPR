@@ -11,11 +11,12 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 # Local module imports
-from configs.parser import build_config, init_model
+from configs.parser import init_model
+from configs.runtime import build_config_and_datasets
 from data.test_dataset import TestDataset
-from data.upload_dataset import upload_dataset
 from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
 from eval_metrics import visualizations
+from utils import commons
 
 # Initialize Logger
 logger = logging.getLogger(__name__)
@@ -137,23 +138,20 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     return recalls, recalls_str, uncertainty_corr
 
 if __name__ == "__main__":
-    cfg, entries = build_config()
+    # ---- Load config and datasets (shared helper) ----
+    cfg, entries, datasets_paths = build_config_and_datasets()
 
-    datasets_paths = upload_dataset(cfg, entries)
     device, model = init_model(cfg)
 
-    if cfg.get('resume_model'):
-        src = Path(cfg['resume_model'])
-        if src.exists():
-            shutil.copy(src, cfg['log_dir'])
-            logger.info(f"Copied resume model from {src} to {cfg['log_dir']}")
+    # Optionally copy the resume model into the current log directory
+    commons.copy_resume_model_to_log_dir(cfg, logger)
 
     for entry in entries:
-        name = entry['name']
+        name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
-        
+
         recalls, r_str, corr = eval_dataset(
-            cfg, model, device, name, datasets_paths[name]['test']
+            cfg, model, device, name, datasets_paths[name]["test"]
         )
 
-    logger.info("="*30 + "\nAll processes finished.")
+    logger.info("=" * 30 + "\nAll processes finished.")

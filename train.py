@@ -10,7 +10,8 @@ import torchvision.transforms as T
 import shutil
 from pathlib import Path
 
-from configs.parser import build_config, init_model
+from configs.parser import init_model
+from configs.runtime import build_config_and_datasets
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
 from data.upload_dataset import upload_dataset
@@ -280,22 +281,19 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     logger.info("Experiment finished (without any errors)")
 
 if __name__ == "__main__":
-    # ---- Load and build config ----       
-    cfg, entries = build_config()
+    # ---- Load config and datasets (shared helper) ----
+    cfg, entries, datasets_dir = build_config_and_datasets()
 
-    datasetsts_dir = upload_dataset(cfg, entries)
-    commons.make_deterministic(cfg['seed'])
+    # Training-specific setup
+    commons.make_deterministic(cfg["seed"])
     # Handle the cuDNN Benchmark speed/reproducibility trade-off
-    commons.setup_cudnn(cfg['cudnn_benchmark'])
+    commons.setup_cudnn(cfg["cudnn_benchmark"])
     device, model = init_model(cfg)
 
-    if cfg.get('resume_model'):
-        src = Path(cfg['resume_model'])
-        if src.exists():
-            shutil.copy(src, cfg['log_dir'])
-            logger.info(f"Copied resume model from {src} to {cfg['log_dir']}")
+    # Optionally copy the resume model into the current log directory
+    commons.copy_resume_model_to_log_dir(cfg, logger)
 
     for e in entries:
         logger.info(f"Training dataset: {e['name']}")
-        train(cfg, model, device, e["name"], datasetsts_dir)
+        train(cfg, model, device, e["name"], datasets_dir)
     logger.info("Training completed.")
