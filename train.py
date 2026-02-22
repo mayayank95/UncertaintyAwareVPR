@@ -14,7 +14,6 @@ from configs.parser import init_model
 from configs.runtime import build_config_and_datasets
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
-from data.upload_dataset import upload_dataset
 from eval import eval_dataset
 from losses import cosface_loss
 from losses.cosface_loss import cosine_distance
@@ -27,7 +26,7 @@ from utils import augmentations, commons, util
 logger = logging.getLogger(__name__)
 torch.backends.cudnn.benchmark = True  # Provides a speedup
 
-def train(args, model, device, dataset_name, datasetsts_dir):
+def train(args, model, device, dataset_name, datasets_dir):
     start_time = datetime.now()
 
     logger.info(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
@@ -58,8 +57,8 @@ def train(args, model, device, dataset_name, datasetsts_dir):
             logger.info("Using separate aggregation for variance.")
     model_optimizer = torch.optim.Adam(model.parameters(), lr=args['lr'])
 
-    train_set_folder = f"{datasetsts_dir[dataset_name]['train']}"
-    val_set_folder = f"{datasetsts_dir[dataset_name]['validation']}"
+    train_set_folder = f"{datasets_dir[dataset_name]['train']}"
+    val_set_folder = f"{datasets_dir[dataset_name]['validation']}"
 
     #### Datasets
     groups = [TrainDataset(dataset_name, args, train_set_folder, M=args['M'], alpha=args['alpha'], N=args['N'], L=args['L'],
@@ -91,7 +90,7 @@ def train(args, model, device, dataset_name, datasetsts_dir):
     elif args.get('load_classifiers'):
         best_val_recall1 = start_epoch_num = 0
         resume_path = args['resume_model'] if args.get('resume_model') is not None else args['resume_train']
-        logger.info(f"Loading ONLY classifier weights from {resume_path}")
+        #logger.info(f"Loading ONLY classifier weights from {resume_path}")
         checkpoint = torch.load(resume_path, map_location='cpu')
         if isinstance(checkpoint, dict) and "classifiers_state_dict" in checkpoint:
             if len(checkpoint["classifiers_state_dict"]) == len(classifiers):

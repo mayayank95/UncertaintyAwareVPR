@@ -1,11 +1,12 @@
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from configs.parser import build_config
 from data.upload_dataset import upload_dataset
 
 
-def build_config_and_datasets() -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+def build_config_and_datasets() -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Dict[str, Path]]]:
     """
     Shared helper for entrypoints (train.py, eval.py, etc.).
 
