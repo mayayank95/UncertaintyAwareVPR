@@ -24,12 +24,14 @@ class Basic(GeoLocalizationNet):
             backbone=opt.get("backbone", "ResNet18"),
             fc_output_dim=opt.get("descriptors_dimension", 512),
             train_all_layers=opt.get("train_all_layers", False),
-            uncertainty_mode=False,   # Include L2Norm as the last layer
+            uncertainty_mode=True,
         )
         self.id = 'basic'
+        self.final_l2 = L2Norm()
 
     def forward(self, inputs):
-        mu = super().forward(inputs)   # כבר L2-normalized
+        desc = super().forward(inputs)
+        mu = self.final_l2(desc)
         return mu, torch.zeros_like(mu)
 
 

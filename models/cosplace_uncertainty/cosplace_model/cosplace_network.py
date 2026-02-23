@@ -36,16 +36,13 @@ class GeoLocalizationNet(nn.Module):
         super().__init__()
         assert backbone in CHANNELS_NUM_IN_LAST_CONV, f"backbone must be one of {list(CHANNELS_NUM_IN_LAST_CONV.keys())}"
         self.backbone, features_dim = get_backbone(backbone, train_all_layers)
+        # aggregation: L2Norm, GeM, Flatten, Linear only. final_l2 is added by Basic/Uncertainty as top-level.
         self.aggregation = nn.Sequential(
             L2Norm(),
             GeM(),
             Flatten(),
-            nn.Linear(features_dim, fc_output_dim)#,
-            #L2Norm()
+            nn.Linear(features_dim, fc_output_dim),
         )
-    
-        if not uncertainty_mode:
-            self.aggregation.add_module("final_l2", L2Norm())
 
     def forward(self, x):
         x = self.backbone(x)

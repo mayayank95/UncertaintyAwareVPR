@@ -15,14 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
+    # overrides config values
+    # action="store_true", if not provided => False, if provided => True
     p = argparse.ArgumentParser(description="Dataset preparation: config-first, CLI overrides.")
+
     p.add_argument("--config", type=str, default="configs/datasets.json", help="Path to datasets config JSON")
+    p.add_argument("--save_config", action="store_true", help="Save merged configuration to logs folder")
 
-    p.add_argument("--data_folder", type=str, default=None, help="Root folder containing raw datasets (overrides config value).")
-    p.add_argument("--local_data_folder", type=str, default=None,  help="colab use-Target folder for prepared datasets (overrides config value).")
-    p.add_argument("--logs_folder", type=str, default=None,  help="folder to save logs (overrides config value).")
+    p.add_argument("--data_folder", type=str, default=None, help="Root folder containing raw datasets.")
+    p.add_argument("--local_data_folder", type=str, default=None,  help="colab use-Target folder for prepared datasets.")
+    p.add_argument("--logs_folder", type=str, default=None,  help="folder to save logs.")
+    p.add_argument("--colab", action="store_true", help="Run in Google Colab mode.")
+    p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations.")
 
-    # Optional: filter which entries to run 
+    # Filter which entries to run 
     p.add_argument("--datasets", type=str, default=None, help='Datasets to process (e.g. "all", "sf_xl", or "sf_xl,pitts30k")')
     p.add_argument("--datasets_type", type=str, default="all", help='Datasets type to upload(e.g. "all", "train", or "test", "val")')
 
@@ -32,24 +38,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume_model", type=str, default=None,
                         help="path to model to resume, e.g. logs/.../best_model.pth")
     p.add_argument("--load_classifiers", action="store_true", help="If set, load classifier weights from the resume_model checkpoint.")
-                        
-    # IMPORTANT: tri-state booleans so config merging works:
-    # - if not provided => False
-    # - if provided => True
-    p.add_argument("--colab", action="store_true", help="Run in Google Colab mode (overrides config).")
-    p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations.")
-
-    # Optional: save post-merge config
-    p.add_argument("--save_config", action="store_true", help="Save merged configuration to logs folder")
-    p.add_argument("--save_descriptors",action="store_true", help="set to True if you want to save the descriptors extracted by the model")
+    p.add_argument("--load_model_weights", action="store_true", help="If set, load model weights from the resume_model checkpoint.")
     
     # model parameters
     p.add_argument("--backbone", type=str, default=None, help="basic backbone model")
     p.add_argument("--descriptors_dimension", type=int, default=None, help="dimension of the output feature vector")
     p.add_argument("--method", type=str, default=None, help="model name")
-    p.add_argument("--positive_dist_threshold", type=int, default=None, help="Distance in meters for a prediction to be considered a positive.")
     p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square).")
-    p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation.") 
     p.add_argument("--train_all_layers", action="store_true", help="If true, train all layers of the backbone")
     p.add_argument("--resize_test_imgs", action="store_true", help="If the test images should be resized to image_size along the shorter side while maintaining aspect ratio")
     
@@ -62,7 +57,10 @@ def parse_args() -> argparse.Namespace:
     # evaluation parameters
     p.add_argument("--recall_values", type=int, nargs="+", default=[1, 5, 10, 20], help="Recall values to compute during evaluation.")
     p.add_argument("--infer_batch_size", type=int, default=16, help="Batch size for inference (validating and testing)")
-  
+    p.add_argument("--save_descriptors",action="store_true", help="set to True if you want to save the descriptors extracted by the model")
+    p.add_argument("--positive_dist_threshold", type=int, default=None, help="Distance in meters for a prediction to be considered a positive.")
+    p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation.") 
+
     # visualization parameters
     p.add_argument("--num_preds_to_save", type=int, default=3, help="Number of predictions to save per query.")
     p.add_argument("--num_queries_to_save", type=int, default=3, help="Number of queries to save their predictions.")

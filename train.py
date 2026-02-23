@@ -88,19 +88,28 @@ def train(args, model, device, dataset_name, datasets_dir):
             _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
             logger.info(f"Resumed model performance: {resume_recalls_str}")
     elif args.get('load_classifiers'):
+        # Load only classifier weights from checkpoint (--load_classifiers); model weights are gated by --load_model_weights in get_model.
         best_val_recall1 = start_epoch_num = 0
         resume_path = args['resume_model'] if args.get('resume_model') is not None else args['resume_train']
-        #logger.info(f"Loading ONLY classifier weights from {resume_path}")
-        checkpoint = torch.load(resume_path, map_location='cpu')
-        if isinstance(checkpoint, dict) and "classifiers_state_dict" in checkpoint:
-            if len(checkpoint["classifiers_state_dict"]) == len(classifiers):
-                for c, sd in zip(classifiers, checkpoint["classifiers_state_dict"]):
-                    c.load_state_dict(sd)
-                logger.info("Classifiers weights loaded successfully.")
-            else:
-                logger.warning(f"Skipping classifiers load: Checkpoint has {len(checkpoint['classifiers_state_dict'])} classifiers, config has {len(classifiers)}.")
+        if resume_path is None:
+            logger.warning("--load_classifiers set but no --resume_model or --resume_train; skipping classifier load.")
         else:
-            logger.warning("No classifiers_state_dict found in checkpoint.")
+            logger.info(f"Loading classifier weights (--load_classifiers) from {resume_path}")
+            checkpoint = torch.load(resume_path, map_location='cpu', weights_only=False)
+            if isinstance(checkpoint, dict) and "classifiers_state_dict" in checkpoint:
+                if len(checkpoint["classifiers_state_dict"]) == len(classifiers):
+                    for c, sd in zip(classifiers, checkpoint["classifiers_state_dict"]):
+                        c.load_state_dict(sd)
+                    for c in classifiers:
+                        for p in c.parameters():
+                            p.requires_grad = False
+                    # No optimizer needed when classifiers are frozen; use no-op optimizers so the loop still runs.
+                    classifiers_optimizers = [None for _ in classifiers]
+                    logger.info("Classifiers weights loaded successfully and frozen for the rest of training (no classifier optimizers).")
+                else:
+                    logger.warning(f"Skipping classifiers load: Checkpoint has {len(checkpoint['classifiers_state_dict'])} classifiers, config has {len(classifiers)}.")
+            else:
+                logger.warning("No classifiers_state_dict found in checkpoint.")
     elif args.get('resume_model') is not None:
         best_val_recall1 = start_epoch_num = 0
         logger.info(f"Resuming from model {args['resume_model']}")
@@ -143,7 +152,8 @@ def train(args, model, device, dataset_name, datasets_dir):
         # Select classifier and dataloader according to epoch
         current_group_num = epoch_num % args['groups_num']
         classifiers[current_group_num] = classifiers[current_group_num].to(device)
-        util.move_to_device(classifiers_optimizers[current_group_num], device)
+        if classifiers_optimizers[current_group_num] is not None:
+            util.move_to_device(classifiers_optimizers[current_group_num], device)
 
         dataloader = commons.InfiniteDataLoader(groups[current_group_num], num_workers=args['num_workers'],
                                                 batch_size=args['batch_size'], shuffle=True,
@@ -165,7 +175,8 @@ def train(args, model, device, dataset_name, datasets_dir):
                 images = gpu_augmentation(images)
             
             model_optimizer.zero_grad()
-            classifiers_optimizers[current_group_num].zero_grad()
+            if classifiers_optimizers[current_group_num] is not None:
+                classifiers_optimizers[current_group_num].zero_grad()
             
             loss = torch.tensor(0.0, device=device)
 
@@ -209,12 +220,14 @@ def train(args, model, device, dataset_name, datasets_dir):
             if args['use_amp16']:
                 scaler.scale(loss).backward()
                 scaler.step(model_optimizer)
-                scaler.step(classifiers_optimizers[current_group_num])
+                if classifiers_optimizers[current_group_num] is not None:
+                    scaler.step(classifiers_optimizers[current_group_num])
                 scaler.update()
             else:
                 loss.backward()
                 model_optimizer.step()
-                classifiers_optimizers[current_group_num].step()
+                if classifiers_optimizers[current_group_num] is not None:   
+                    classifiers_optimizers[current_group_num].step()
             
             epoch_losses.append(loss.item())
             del loss
@@ -227,7 +240,8 @@ def train(args, model, device, dataset_name, datasets_dir):
                 break
         
         classifiers[current_group_num] = classifiers[current_group_num].cpu()
-        util.move_to_device(classifiers_optimizers[current_group_num], "cpu")
+        if classifiers_optimizers[current_group_num] is not None:
+            util.move_to_device(classifiers_optimizers[current_group_num], "cpu")
         
         if args['model_mode'] == "uncertainty":
             mean_total_loss = np.mean(epoch_losses)
@@ -266,7 +280,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": model_optimizer.state_dict(),
                 "classifiers_state_dict": [c.state_dict() for c in classifiers],
-                "optimizers_state_dict": [c.state_dict() for c in classifiers_optimizers],
+                "optimizers_state_dict": [c.state_dict() if c is not None else {} for c in classifiers_optimizers],
                 "best_val_recall1": best_val_recall1
             }, is_best, args['log_dir'])
 

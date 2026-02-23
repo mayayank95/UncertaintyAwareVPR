@@ -42,7 +42,11 @@ def resume_train(device: str, args: Namespace, output_folder: str, model: torch.
                     c = c.to(device)
                     c.load_state_dict(sd)
                     c = c.cpu()
-                logging.info("Classifiers weights loaded successfully.")
+                for c in classifiers:
+                    for p in c.parameters():
+                        p.requires_grad = False
+                logging.info("Classifiers weights loaded successfully and frozen for the rest of training.")
+                return model, model_optimizer, classifiers, [None] * len(classifiers), 0, 0
             else:
                 logging.warning(f"Skipping classifiers load: Checkpoint has {len(checkpoint['classifiers_state_dict'])} classifiers, config has {len(classifiers)}.")
         else:
@@ -67,7 +71,9 @@ def resume_train(device: str, args: Namespace, output_folder: str, model: torch.
         c = c.to(device)
         c.load_state_dict(sd)
     for c, sd in zip(classifiers_optimizers, checkpoint["optimizers_state_dict"]):
-        c.load_state_dict(sd)
+        # Skip loading optimizer state if it was saved from frozen classifiers (empty optimizers).
+        if len(sd.get("state", {})) > 0:
+            c.load_state_dict(sd)
     for c in classifiers:
         # Move classifiers back to CPU to save some GPU memory
         c = c.cpu()
