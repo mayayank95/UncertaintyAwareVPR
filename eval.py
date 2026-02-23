@@ -1,8 +1,5 @@
 import logging
-
-import json
 from pathlib import Path
-import shutil
 
 import faiss
 import numpy as np
@@ -10,15 +7,12 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
-# Local module imports
-from configs.parser import init_model
-from configs.runtime import build_config_and_datasets
+from configs.runtime import build_config_and_datasets, init_model
 from data.test_dataset import TestDataset
-from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
 from eval_metrics import visualizations
+from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
 from utils import commons
 
-# Initialize Logger
 logger = logging.getLogger(__name__)
 
 def eval_dataset(args, model, device, dataset_name, eval_ds_path):
@@ -128,8 +122,6 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
 
     if args['datasets_type'] == ['test']:
         logger.info(f"Results for {dataset_name}: {recalls_str}")
-    if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:        
-        logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")
     if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:
         if uncertainty_corr is not None:
             logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")

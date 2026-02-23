@@ -1,11 +1,10 @@
+import logging
+import shutil
+from pathlib import Path
+from typing import Dict, List, Type
 
 import torch
-import shutil
-import logging
-from typing import Type, List
-from argparse import Namespace
 from losses.cosface_loss import MarginCosineProduct
-from pathlib import Path
 
 
 def move_to_device(optimizer: Type[torch.optim.Optimizer], device: str):
@@ -27,7 +26,7 @@ def save_checkpoint(state: dict, is_best: bool, output_folder: str,
         }, f"{output_folder}/best_model.pth")
 
 
-def resume_train(device: str, args: Namespace, output_folder: str, model: torch.nn.Module,
+def resume_train(device: str, args: Dict, output_folder: str, model: torch.nn.Module,
                  model_optimizer: Type[torch.optim.Optimizer], classifiers: List[MarginCosineProduct],
                  classifiers_optimizers: List[Type[torch.optim.Optimizer]]):
     """Load model, optimizer, and other training parameters"""

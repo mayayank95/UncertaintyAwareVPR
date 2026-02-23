@@ -1,8 +1,5 @@
-import torch
-import torch.nn as nn
-from models.cosplace_uncertainty.cosplace_model import cosplace_network
 import logging
-
+import torch
 from models.model_mode import deliver_model, GeneralModelWrapper
 
 logger = logging.getLogger(__name__)

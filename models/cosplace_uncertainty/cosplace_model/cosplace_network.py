@@ -25,23 +25,24 @@ CHANNELS_NUM_IN_LAST_CONV = {
 
 
 class GeoLocalizationNet(nn.Module):
-    def __init__(self, backbone : str, fc_output_dim : int, train_all_layers : bool = False, uncertainty_mode: bool = False):
-        """Return a model for GeoLocalization.
-        
+    def __init__(self, backbone: str, fc_output_dim: int, train_all_layers: bool = False):
+        """Base model for GeoLocalization: backbone + aggregation (L2Norm, GeM, Flatten, Linear).
+        Subclasses (Basic / Uncertainty) add their own final_l2 and optional var_head.
+
         Args:
-            backbone (str): which torchvision backbone to use. Must be VGG16 or a ResNet.
-            fc_output_dim (int): the output dimension of the last fc layer, equivalent to the descriptors dimension.
-            train_all_layers (bool): whether to freeze the first layers of the backbone during training or not.
+            backbone: which torchvision backbone to use. Must be VGG16 or a ResNet.
+            fc_output_dim: the output dimension of the last fc layer, equivalent to the descriptors dimension.
+            train_all_layers: whether to freeze the first layers of the backbone during training or not.
         """
         super().__init__()
         assert backbone in CHANNELS_NUM_IN_LAST_CONV, f"backbone must be one of {list(CHANNELS_NUM_IN_LAST_CONV.keys())}"
         self.backbone, features_dim = get_backbone(backbone, train_all_layers)
-        # aggregation: L2Norm, GeM, Flatten, Linear only. final_l2 is added by Basic/Uncertainty as top-level.
         self.aggregation = nn.Sequential(
             L2Norm(),
             GeM(),
             Flatten(),
             nn.Linear(features_dim, fc_output_dim),
+            #L2Norm()
         )
 
     def forward(self, x):

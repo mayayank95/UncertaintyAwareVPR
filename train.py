@@ -1,22 +1,18 @@
-
-import sys
-import torch
 import logging
-import numpy as np
-from tqdm import tqdm
 import multiprocessing
+import sys
 from datetime import datetime
-import torchvision.transforms as T
-import shutil
-from pathlib import Path
 
-from configs.parser import init_model
-from configs.runtime import build_config_and_datasets
+import numpy as np
+import torch
+import torchvision.transforms as T
+from tqdm import tqdm
+
+from configs.runtime import build_config_and_datasets, init_model
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
 from eval import eval_dataset
 from losses import cosface_loss
-from losses.cosface_loss import cosine_distance
 from losses.gaussian_cosine_loss import GaussianCosineLoss
 from utils import augmentations, commons, util
 
@@ -24,7 +20,6 @@ from utils import augmentations, commons, util
 # Define the logger for this module
 # It will inherit the configuration set in setup_logging within parser.py
 logger = logging.getLogger(__name__)
-torch.backends.cudnn.benchmark = True  # Provides a speedup
 
 def train(args, model, device, dataset_name, datasets_dir):
     start_time = datetime.now()
@@ -33,7 +28,7 @@ def train(args, model, device, dataset_name, datasets_dir):
     if torch.cuda.is_available():
         logger.info(f"GPU type: {torch.cuda.get_device_name(0)}")
 
-    #### Optimizer
+    # ---- Losses & optimizer ----
     active_losses = args['losses']
     if active_losses is None:
         if args['model_mode'] == "uncertainty":
@@ -60,7 +55,7 @@ def train(args, model, device, dataset_name, datasets_dir):
     train_set_folder = f"{datasets_dir[dataset_name]['train']}"
     val_set_folder = f"{datasets_dir[dataset_name]['validation']}"
 
-    #### Datasets
+    # ---- Datasets & classifiers ----
     groups = [TrainDataset(dataset_name, args, train_set_folder, M=args['M'], alpha=args['alpha'], N=args['N'], L=args['L'],
                         current_group=n, min_images_per_class=args['min_images_per_class']) for n in range(args['groups_num'])]
     # Each group has its own classifier, which depends on the number of classes in the group
@@ -74,7 +69,7 @@ def train(args, model, device, dataset_name, datasets_dir):
     val_ds = TestDataset(f"{val_set_folder}/database", f"{val_set_folder}/queries", args['positive_dist_threshold'], args.get('image_size'), use_labels=True)  
     logger.info(f"Validation set: {val_ds}")
 
-    #### Resume
+    # ---- Resume from checkpoint ----
     if args.get('resume_train') is not None:
         model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num = \
             util.resume_train(device, args, args['log_dir'], model, model_optimizer, classifiers, classifiers_optimizers)
@@ -119,7 +114,7 @@ def train(args, model, device, dataset_name, datasets_dir):
     else:
         best_val_recall1 = start_epoch_num = 0
 
-    #### Train / evaluation loop
+    # ---- Training loop ----
     logger.info("Start training ...")
     logger.info(f"There are {len(groups[0])} classes for the first group, " +
                 f"each epoch has {args['iterations_per_epoch']} iterations " +
@@ -138,9 +133,6 @@ def train(args, model, device, dataset_name, datasets_dir):
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
 
-    if args['use_amp16']:
-        scaler = torch.amp.GradScaler("cuda")
-
     patience = args.get('patience', 5)
     not_improved_count = 0
 
@@ -149,7 +141,6 @@ def train(args, model, device, dataset_name, datasets_dir):
         
         #### Train
         epoch_start_time = datetime.now()
-        # Select classifier and dataloader according to epoch
         current_group_num = epoch_num % args['groups_num']
         classifiers[current_group_num] = classifiers[current_group_num].to(device)
         if classifiers_optimizers[current_group_num] is not None:
@@ -180,20 +171,11 @@ def train(args, model, device, dataset_name, datasets_dir):
             
             loss = torch.tensor(0.0, device=device)
 
-            # Forward pass and classifier loss (with AMP if enabled)
-            if args['use_amp16']:
-                with torch.amp.autocast("cuda"):
-                    mu_norm, variance = model(images)
-                    if "ce" in active_losses:
-                        output = classifiers[current_group_num](mu_norm, targets)
-                        loss_ce = ce_criterion(output, targets)
-                        loss = loss + loss_ce
-            else:
-                mu_norm, variance = model(images)
-                if "ce" in active_losses:
-                    output = classifiers[current_group_num](mu_norm, targets)
-                    loss_ce = ce_criterion(output, targets)
-                    loss = loss + loss_ce
+            mu_norm, variance = model(images)
+            if "ce" in active_losses:
+                output = classifiers[current_group_num](mu_norm, targets)
+                loss_ce = ce_criterion(output, targets)
+                loss = loss + loss_ce
             
             # Uncertainty calculations (outside autocast for stability)
             if "uncertainty" in active_losses and args['model_mode'] == "uncertainty":
@@ -216,18 +198,10 @@ def train(args, model, device, dataset_name, datasets_dir):
             if "ce" in active_losses:
                 epoch_losses_ce.append(loss_ce.item())
             
-            # Backward pass
-            if args['use_amp16']:
-                scaler.scale(loss).backward()
-                scaler.step(model_optimizer)
-                if classifiers_optimizers[current_group_num] is not None:
-                    scaler.step(classifiers_optimizers[current_group_num])
-                scaler.update()
-            else:
-                loss.backward()
-                model_optimizer.step()
-                if classifiers_optimizers[current_group_num] is not None:   
-                    classifiers_optimizers[current_group_num].step()
+            loss.backward()
+            model_optimizer.step()
+            if classifiers_optimizers[current_group_num] is not None:
+                classifiers_optimizers[current_group_num].step()
             
             epoch_losses.append(loss.item())
             del loss
