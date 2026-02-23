@@ -1,6 +1,5 @@
 import logging
 import multiprocessing
-import sys
 from datetime import datetime
 
 import numpy as np
@@ -16,25 +15,32 @@ from losses import cosface_loss
 from losses.gaussian_cosine_loss import GaussianCosineLoss
 from utils import augmentations, commons, util
 
-
-# Define the logger for this module
-# It will inherit the configuration set in setup_logging within parser.py
 logger = logging.getLogger(__name__)
+
+
+def _load_and_freeze_classifiers(classifiers, checkpoint_path):
+    """Load classifier weights from checkpoint and freeze them. Returns updated optimizers (None per classifier)."""
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    if not isinstance(checkpoint, dict) or "classifiers_state_dict" not in checkpoint:
+        logger.warning("No classifiers_state_dict found in checkpoint.")
+        return None
+    if len(checkpoint["classifiers_state_dict"]) != len(classifiers):
+        logger.warning(f"Skipping classifiers load: checkpoint has {len(checkpoint['classifiers_state_dict'])}, config has {len(classifiers)}.")
+        return None
+    for c, sd in zip(classifiers, checkpoint["classifiers_state_dict"]):
+        c.load_state_dict(sd)
+    for c in classifiers:
+        for p in c.parameters():
+            p.requires_grad = False
+    logger.info("Classifiers loaded and frozen.")
+    return [None] * len(classifiers)
+
 
 def train(args, model, device, dataset_name, datasets_dir):
     start_time = datetime.now()
 
-    logger.info(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
-    if torch.cuda.is_available():
-        logger.info(f"GPU type: {torch.cuda.get_device_name(0)}")
-
     # ---- Losses & optimizer ----
     active_losses = args['losses']
-    if active_losses is None:
-        if args['model_mode'] == "uncertainty":
-            active_losses = ["ce", "uncertainty"]
-        else:
-            active_losses = ["ce"]
     logger.info(f"Active losses: {active_losses}")
 
     if "ce" in active_losses:
@@ -66,62 +72,12 @@ def train(args, model, device, dataset_name, datasets_dir):
     logger.info(f"The {len(groups)} groups have respectively the following number of classes {[len(g) for g in groups]}")
     logger.info(f"The {len(groups)} groups have respectively the following number of images {[g.get_images_num() for g in groups]}")
 
-    val_ds = TestDataset(f"{val_set_folder}/database", f"{val_set_folder}/queries", args['positive_dist_threshold'], args.get('image_size'), use_labels=True)  
+    val_ds = TestDataset(f"{val_set_folder}/database", f"{val_set_folder}/queries", args['positive_dist_threshold'], args.get('image_size'), use_labels=True)
     logger.info(f"Validation set: {val_ds}")
 
-    # ---- Resume from checkpoint ----
-    if args.get('resume_train') is not None:
-        model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num = \
-            util.resume_train(device, args, args['log_dir'], model, model_optimizer, classifiers, classifiers_optimizers)
-        
-        if not args.get('load_classifiers'):
-            epoch_num = start_epoch_num - 1
-            logger.info(f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}")
-            
-            # Verify resume performance
-            logger.info("Verifying resumed model performance...")
-            _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
-            logger.info(f"Resumed model performance: {resume_recalls_str}")
-    elif args.get('load_classifiers'):
-        # Load only classifier weights from checkpoint (--load_classifiers); model weights are gated by --load_model_weights in get_model.
-        best_val_recall1 = start_epoch_num = 0
-        resume_path = args['resume_model'] if args.get('resume_model') is not None else args['resume_train']
-        if resume_path is None:
-            logger.warning("--load_classifiers set but no --resume_model or --resume_train; skipping classifier load.")
-        else:
-            logger.info(f"Loading classifier weights (--load_classifiers) from {resume_path}")
-            checkpoint = torch.load(resume_path, map_location='cpu', weights_only=False)
-            if isinstance(checkpoint, dict) and "classifiers_state_dict" in checkpoint:
-                if len(checkpoint["classifiers_state_dict"]) == len(classifiers):
-                    for c, sd in zip(classifiers, checkpoint["classifiers_state_dict"]):
-                        c.load_state_dict(sd)
-                    for c in classifiers:
-                        for p in c.parameters():
-                            p.requires_grad = False
-                    # No optimizer needed when classifiers are frozen; use no-op optimizers so the loop still runs.
-                    classifiers_optimizers = [None for _ in classifiers]
-                    logger.info("Classifiers weights loaded successfully and frozen for the rest of training (no classifier optimizers).")
-                else:
-                    logger.warning(f"Skipping classifiers load: Checkpoint has {len(checkpoint['classifiers_state_dict'])} classifiers, config has {len(classifiers)}.")
-            else:
-                logger.warning("No classifiers_state_dict found in checkpoint.")
-    elif args.get('resume_model') is not None:
-        best_val_recall1 = start_epoch_num = 0
-        logger.info(f"Resuming from model {args['resume_model']}")
-        logger.info("Verifying resumed model performance...")
-        _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
-        logger.info(f"Resumed model performance: {resume_recalls_str}")
-    else:
-        best_val_recall1 = start_epoch_num = 0
-
-    # ---- Training loop ----
-    logger.info("Start training ...")
-    logger.info(f"There are {len(groups[0])} classes for the first group, " +
-                f"each epoch has {args['iterations_per_epoch']} iterations " +
-                f"with batch_size {args['batch_size']}, therefore the model sees each class (on average) " +
-                f"{args['iterations_per_epoch'] * args['batch_size'] / len(groups[0]):.1f} times per epoch")
-
-
+    # GPU augmentations operate on batches (4D tensors) and must be applied in the
+    # training loop after collation, unlike CPU augmentations which run per-image
+    # inside TrainDataset.__getitem__.
     if args['augmentation_device'] == "cuda":
         gpu_augmentation = T.Compose([
                 augmentations.DeviceAgnosticColorJitter(brightness=args['brightness'],
@@ -133,13 +89,44 @@ def train(args, model, device, dataset_name, datasets_dir):
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
 
+    # ---- Resume from checkpoint ----
+    if args.get('resume_train') is not None:
+        model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num = \
+            util.resume_train(device, args, args['log_dir'], model, model_optimizer, classifiers, classifiers_optimizers)
+        epoch_num = start_epoch_num - 1
+        logger.info(f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}")
+    elif args.get('load_classifiers'):
+        best_val_recall1 = start_epoch_num = 0
+        resume_path = args.get('resume_model')
+        if resume_path is None:
+            logger.warning("--load_classifiers set but no --resume_model; skipping.")
+        else:
+            logger.info(f"Loading classifier weights from {resume_path}")
+            frozen_optims = _load_and_freeze_classifiers(classifiers, resume_path)
+            if frozen_optims is not None:
+                classifiers_optimizers = frozen_optims
+    else:
+        best_val_recall1 = start_epoch_num = 0
+
+    if args.get('resume_train') or args.get('resume_model'):
+        logger.info("Verifying resumed model performance...")
+        _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        logger.info(f"Resumed model performance: {resume_recalls_str}")
+
+    # ---- Training loop ----
+    logger.info("Start training ...")
+    logger.info(f"There are {len(groups[0])} classes for the first group, " +
+                f"each epoch has {args['iterations_per_epoch']} iterations " +
+                f"with batch_size {args['batch_size']}, therefore the model sees each class (on average) " +
+                f"{args['iterations_per_epoch'] * args['batch_size'] / len(groups[0]):.1f} times per epoch")
+
     patience = args.get('patience', 5)
     not_improved_count = 0
 
     mean_variances_history = []
     for epoch_num in range(start_epoch_num, args['epochs_num']):
         
-        #### Train
+        # ---- Train ----
         epoch_start_time = datetime.now()
         current_group_num = epoch_num % args['groups_num']
         classifiers[current_group_num] = classifiers[current_group_num].to(device)
@@ -162,7 +149,7 @@ def train(args, model, device, dataset_name, datasets_dir):
             images, targets, _ = next(dataloader_iterator)
             images, targets = images.to(device), targets.to(device)
             
-            if args['augmentation_device']  == "cuda":
+            if args['augmentation_device'] == "cuda":
                 images = gpu_augmentation(images)
             
             model_optimizer.zero_grad()
@@ -176,7 +163,8 @@ def train(args, model, device, dataset_name, datasets_dir):
                 output = classifiers[current_group_num](mu_norm, targets)
                 loss_ce = ce_criterion(output, targets)
                 loss = loss + loss_ce
-            
+                epoch_losses_ce.append(loss_ce.item())
+
             # Uncertainty calculations (outside autocast for stability)
             if "uncertainty" in active_losses and args['model_mode'] == "uncertainty":
                 # Normalize class weights to get the ground-truth "prototype" for each class
@@ -194,10 +182,8 @@ def train(args, model, device, dataset_name, datasets_dir):
             
             if args['model_mode'] == "uncertainty":
                 epoch_variances.append(variance.mean().item())
-
-            if "ce" in active_losses:
-                epoch_losses_ce.append(loss_ce.item())
-            
+                
+            # ---- Backward ----
             loss.backward()
             model_optimizer.step()
             if classifiers_optimizers[current_group_num] is not None:
@@ -227,13 +213,13 @@ def train(args, model, device, dataset_name, datasets_dir):
                 log_msg += f", loss_ce = {np.mean(epoch_losses_ce):.4f}"
             if "uncertainty" in active_losses:
                 log_msg += f", loss_uncertainty = {np.mean(epoch_losses_gnll):.4f}"
-            log_msg += f", mean_variance = {mean_variance:.4f}"
+                log_msg += f", mean_variance = {mean_variance:.4f}"
             logger.info(log_msg)
         else:
             logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, "
                         f"loss = {np.mean(epoch_losses):.4f}")
         
-        #### Evaluation
+        # ---- Evaluate ----
         recalls, recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
         logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {recalls_str}")
         is_best = recalls[0] > best_val_recall1
@@ -276,6 +262,10 @@ if __name__ == "__main__":
     # Handle the cuDNN Benchmark speed/reproducibility trade-off
     commons.setup_cudnn(cfg["cudnn_benchmark"])
     device, model = init_model(cfg)
+
+    logger.info(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
+    if torch.cuda.is_available():
+        logger.info(f"GPU type: {torch.cuda.get_device_name(0)}")
 
     # Optionally copy the resume model into the current log directory
     commons.copy_resume_model_to_log_dir(cfg, logger)
