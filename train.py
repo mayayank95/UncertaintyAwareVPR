@@ -1,4 +1,5 @@
 import logging
+import math
 import multiprocessing
 from datetime import datetime
 
@@ -173,8 +174,14 @@ def train(args, model, device, dataset_name, datasets_dir):
                 # Select the specific target vector for each image in the batch
                 target_vectors = norm_weights[targets]
                     
-                # Calculate uncertainty loss comparing the descriptor to its class prototype
-                loss_uncertainty = uncertainty_criterion(mu_norm, target_vectors, variance)
+                # For GaussianNLLLoss: scale L2-normalized embeddings by √D so per-element
+                # squared differences are O(1), matching the Softplus variance range.
+                # GaussianCosineLoss uses cosine distance directly and needs no scaling.
+                if isinstance(uncertainty_criterion, torch.nn.GaussianNLLLoss):
+                    scale = math.sqrt(mu_norm.shape[1])
+                    loss_uncertainty = uncertainty_criterion(mu_norm * scale, target_vectors * scale, variance)
+                else:
+                    loss_uncertainty = uncertainty_criterion(mu_norm, target_vectors, variance)
                 
                 # Sum of classification loss and uncertainty estimation loss
                 loss = loss + uncertainty_lambda * loss_uncertainty
