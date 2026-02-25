@@ -45,6 +45,15 @@ class GeoLocalizationNet(nn.Module):
             #L2Norm()
         )
 
+    def freeze_base(self):
+        """Freeze backbone and aggregation parameters. Returns list of remaining trainable params."""
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+        for p in self.aggregation.parameters():
+            p.requires_grad = False
+        trainable = [p for p in self.parameters() if p.requires_grad]
+        return trainable
+
     def forward(self, x):
         x = self.backbone(x)
         x = self.aggregation(x)

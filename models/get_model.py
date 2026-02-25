@@ -42,4 +42,10 @@ def get_model(args: Dict[str, Any]) -> torch.nn.Module:
     elif method != "cosplace_pretrained":
         logger.info("No --resume_model provided. Model uses default weights (ImageNet).")
 
+    if args.get("freeze_model"):
+        trainable = model.freeze_base()
+        if not trainable:
+            raise ValueError("--freeze_model: no trainable parameters remain. Nothing to train.")
+        logger.info(f"Base model frozen, training {len(trainable)} subclass params")
+
     return model

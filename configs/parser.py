@@ -94,6 +94,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll or gaussian_cosine")
     p.add_argument("--use_variance_linear", action="store_true", help="Add a linear layer before softplus in the variance head")
     p.add_argument("--separate_variance_aggregation", action="store_true", help="Use a separate aggregation module for variance")
+    p.add_argument("--freeze_model", action="store_true", help="Freeze backbone/aggregation, train only the uncertainty head")
 
     return p.parse_args()
     

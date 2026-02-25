@@ -57,7 +57,7 @@ def train(args, model, device, dataset_name, datasets_dir):
         logger.info(f"Using uncertainty loss: {uncertainty_loss_type}")
         if args.get('separate_variance_aggregation'):
             logger.info("Using separate aggregation for variance.")
-    model_optimizer = torch.optim.Adam(model.parameters(), lr=args['lr'])
+    model_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args['lr'])
 
     train_set_folder = f"{datasets_dir[dataset_name]['train']}"
     val_set_folder = f"{datasets_dir[dataset_name]['validation']}"
