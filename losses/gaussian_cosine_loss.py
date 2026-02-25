@@ -1,61 +1,35 @@
 import torch
 import torch.nn as nn
-from losses.cosface_loss import cosine_distance
+from utils.util import cosine_distance
 
 
 class GaussianCosineLoss(nn.Module):
-    """
-    Gaussian Cosine Loss for uncertainty-aware learning.
-    
-    Combines cosine distance with uncertainty estimation to provide a probabilistic
-    measure of similarity between embeddings and their class prototypes.
-    
-    The loss is computed as:
-        0.5 * (dist / var + log(var))
-    
-    where dist is the cosine distance (1 - cosine_similarity) and var is the predicted variance.
-    
+    """Gaussian NLL-inspired loss using cosine distance instead of per-element L2.
+
+    Loss = 0.5 * (d_cos / var + log(var))
+
+    Equivalent to GaussianNLLLoss with uniform variance on L2-normalized vectors
+    (since ||a-b||² = 2 * d_cos for unit vectors), but avoids the per-element
+    scaling mismatch that makes standard GaussianNLLLoss ignore the distance term.
+
     Args:
-        eps (float): Small epsilon value to prevent numerical instability. Default: 1e-6
+        eps: Small value to prevent division by zero and log(0).
     """
-    
-    def __init__(self, eps=1e-6):
+    def __init__(self, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
 
-    @staticmethod
-    def compute_cosine_distance(input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """
-        Compute cosine distance between input and target vectors.
-        
-        Args:
-            input (torch.Tensor): Normalized embedding vectors of shape [B, D]
-            target (torch.Tensor): Target/prototype vectors of shape [B, D]
-        
-        Returns:
-            torch.Tensor: Cosine distance of shape [B], range [0, 2]
-        """
-        return cosine_distance(input, target)
-
     def forward(self, input: torch.Tensor, target: torch.Tensor, var: torch.Tensor) -> torch.Tensor:
         """
-        Compute Gaussian Cosine Loss.
-        
         Args:
-            input (torch.Tensor): Normalized embedding vectors of shape [B, D]
-            target (torch.Tensor): Target/prototype vectors of shape [B, D]
-            var (torch.Tensor): Predicted variance values of shape [B, D]
-        
+            input: L2-normalized embeddings [B, D].
+            target: L2-normalized prototype vectors [B, D].
+            var: Predicted variance [B, D] (averaged to scalar per sample).
+
         Returns:
-            torch.Tensor: Scalar loss value (mean over batch and dimensions)
+            Scalar loss (mean over batch).
         """
-        # Compute cosine distance
-        cosine_dist = self.compute_cosine_distance(input, target)  # [B]
-        
-        # Gaussian NLL-inspired loss with cosine distance:
-        # 0.5 * (dist / var + log(var))
-        # Average variance across dimensions
-        mean_var = torch.mean(var, dim=-1)  # [B]
-        loss = 0.5 * (cosine_dist / (mean_var + self.eps) + torch.log(mean_var + self.eps))
-        
+        dist = cosine_distance(input, target)           # [B]
+        mean_var = torch.mean(var, dim=-1)               # [B]
+        loss = 0.5 * (dist / (mean_var + self.eps) + torch.log(mean_var + self.eps))
         return loss.mean()

@@ -1,4 +1,3 @@
-
 # Based on https://github.com/MuggleWang/CosFace_pytorch/blob/master/layer.py
 
 import torch
@@ -7,41 +6,21 @@ from torch.nn import Parameter
 
 
 def cosine_sim(x1: torch.Tensor, x2: torch.Tensor, dim: int = 1, eps: float = 1e-8) -> torch.Tensor:
+    """Cosine similarity matrix between all pairs (x1[i], x2[j]). Returns shape [N, M]."""
     ip = torch.mm(x1, x2.t())
     w1 = torch.norm(x1, 2, dim)
     w2 = torch.norm(x2, 2, dim)
     return ip / torch.ger(w1, w2).clamp(min=eps)
 
 
-def cosine_distance(x1: torch.Tensor, x2: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    """
-    Compute cosine distance between corresponding pairs of vectors.
-    
-    For normalized vectors, cosine distance = 1 - cosine_similarity = 1 - dot_product
-    
-    Args:
-        x1 (torch.Tensor): Tensor of shape [B, D]
-        x2 (torch.Tensor): Tensor of shape [B, D]
-        eps (float): Small epsilon for numerical stability
-    
-    Returns:
-        torch.Tensor: Cosine distance of shape [B], range [0, 2]
-    """
-    # Compute cosine similarity: dot product of corresponding vectors
-    cos_sim = torch.sum(x1 * x2, dim=-1)  # [B]
-    # Clamp to [-1, 1] to handle numerical errors
-    cos_sim = torch.clamp(cos_sim, -1.0, 1.0)
-    # Convert to distance: 1 - similarity
-    return 1.0 - cos_sim  # [B], range [0, 2]
-
-
 class MarginCosineProduct(nn.Module):
-    """Implement of large margin cosine distance:
+    """Large margin cosine distance (CosFace) classifier.
+
     Args:
         in_features: size of each input sample
-        out_features: size of each output sample
-        s: norm of input feature
-        m: margin
+        out_features: size of each output sample (number of classes)
+        s: scale factor for the cosine logits
+        m: additive margin subtracted from the target class logit
     """
     def __init__(self, in_features: int, out_features: int, s: float = 30.0, m: float = 0.40):
         super().__init__()
@@ -51,7 +30,7 @@ class MarginCosineProduct(nn.Module):
         self.m = m
         self.weight = Parameter(torch.Tensor(out_features, in_features))
         nn.init.xavier_uniform_(self.weight)
-    
+
     def forward(self, inputs: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
         cosine = cosine_sim(inputs, self.weight)
         one_hot = torch.zeros_like(cosine)

@@ -2,7 +2,7 @@ import logging
 import numpy as np
 import torch
 from scipy.stats import pearsonr
-from losses.cosface_loss import cosine_distance
+from utils.util import cosine_distance
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
