@@ -52,6 +52,35 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
 
     return uncertainty_corr
 
+def normalize_variance(variances: np.ndarray, method: str) -> np.ndarray:
+    """Normalize per-query mean variance.
+
+    Args:
+        variances: [num_queries, D] raw variance vectors.
+        method: 'minmax' scales to [0, 1], 'zscore' standardizes to mean=0 / std=1.
+
+    Returns:
+        [num_queries, D] normalized variance vectors.
+    """
+    mean_var = np.mean(variances, axis=-1, keepdims=True)
+    if method == "minmax":
+        v_min, v_max = mean_var.min(), mean_var.max()
+        if v_max - v_min < 1e-12:
+            logger.warning("Variance range is near-zero; skipping minmax normalization.")
+            return variances
+        scale = (mean_var - v_min) / (v_max - v_min)
+    elif method == "zscore":
+        v_std = mean_var.std()
+        if v_std < 1e-12:
+            logger.warning("Variance std is near-zero; skipping zscore normalization.")
+            return variances
+        scale = (mean_var - mean_var.mean()) / v_std
+    else:
+        raise ValueError(f"Unknown normalization method: {method}")
+    logger.info(f"Variance normalized ({method}): range [{scale.min():.4f}, {scale.max():.4f}]")
+    return variances * (scale / (mean_var + 1e-12))
+
+
 def compute_uncertainty_statistics(all_variances, output_dir=None):
     """
     Computes and logs statistics about the uncertainty values.

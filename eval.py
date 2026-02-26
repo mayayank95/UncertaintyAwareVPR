@@ -10,7 +10,8 @@ from tqdm import tqdm
 from configs.runtime import build_config_and_datasets, init_model
 from data.test_dataset import TestDataset
 from eval_metrics import visualizations
-from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
+from eval_metrics.eval_ece_sh import compute_ece
+from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics, normalize_variance
 from utils import commons
 
 logger = logging.getLogger(__name__)
@@ -106,12 +107,23 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
         if not args['dry_run'] and args['datasets_type'] == ['test']:
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
-    # --- 3. Uncertainty Correlation (Optimized) ---
+    # --- 3. Uncertainty Metrics ---
     uncertainty_corr = None
     if args['model_mode'] == "uncertainty":
         uncertainty_corr = compute_uncertainty_correlation(
             args, all_descriptors, all_variances, positives_per_query, test_ds.num_database
         )
+        if args['use_labels'] and positives_per_query is not None:
+            q_variances = all_variances[test_ds.num_database:]
+            if args['dry_run']:
+                q_variances = q_variances[:1]
+            if args.get('normalize_variance'):
+                q_variances = normalize_variance(q_variances, args['normalize_variance'])
+            compute_ece(
+                predictions, positives_per_query, q_variances,
+                n_values=args['recall_values'],
+                output_dir=dataset_output_dir if not args['dry_run'] else None,
+            )
     # --- 4. Visualizations ---
     if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == ['test']:
         visualizations.save_preds(
