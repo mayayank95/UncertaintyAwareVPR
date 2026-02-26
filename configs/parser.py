@@ -32,8 +32,7 @@ def parse_args() -> argparse.Namespace:
     # Resume / checkpoint
     p.add_argument("--resume_train", type=str, default=None, help="Path to training checkpoint, e.g. logs/.../last_checkpoint.pth")
     p.add_argument("--resume_model", type=str, default=None, help="Path to model weights, e.g. logs/.../best_model.pth")
-    p.add_argument("--load_classifiers", action="store_true", help="Load and freeze classifier weights from checkpoint")
-    p.add_argument("--load_model_weights", action="store_true", help="Load model weights from checkpoint")
+    p.add_argument("--load_classifiers", type=str, default=None, help="Path to checkpoint to load and freeze classifier weights from")
 
     # Model
     p.add_argument("--backbone", type=str, default=None, help="Backbone architecture (e.g. ResNet18, ResNet50, VGG16)")
@@ -95,6 +94,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--use_variance_linear", action="store_true", help="Add a linear layer before softplus in the variance head")
     p.add_argument("--separate_variance_aggregation", action="store_true", help="Use a separate aggregation module for variance")
     p.add_argument("--freeze_model", action="store_true", help="Freeze backbone/aggregation, train only the uncertainty head")
+    p.add_argument("--normalize_variance", type=str, default=None, choices=["minmax", "zscore"],
+                   help="Normalize query variances before ECE: 'minmax' scales to [0,1], 'zscore' standardizes to mean=0/std=1")
 
     return p.parse_args()
     

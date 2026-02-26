@@ -35,10 +35,7 @@ def get_model(args: Dict[str, Any]) -> torch.nn.Module:
 
     resume_path = args.get("resume_model")
     if resume_path is not None:
-        if args.get("load_model_weights"):
-            _load_weights(model, resume_path)
-        else:
-            logger.info("Skipping model weights (--load_model_weights not set).")
+        _load_weights(model, resume_path)
     elif method != "cosplace_pretrained":
         logger.info("No --resume_model provided. Model uses default weights (ImageNet).")
 

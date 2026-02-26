@@ -98,14 +98,10 @@ def train(args, model, device, dataset_name, datasets_dir):
         logger.info(f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}")
     elif args.get('load_classifiers'):
         best_val_recall1 = start_epoch_num = 0
-        resume_path = args.get('resume_model')
-        if resume_path is None:
-            logger.warning("--load_classifiers set but no --resume_model; skipping.")
-        else:
-            logger.info(f"Loading classifier weights from {resume_path}")
-            frozen_optims = _load_and_freeze_classifiers(classifiers, resume_path)
-            if frozen_optims is not None:
-                classifiers_optimizers = frozen_optims
+        logger.info(f"Loading classifier weights from {args['load_classifiers']}")
+        frozen_optims = _load_and_freeze_classifiers(classifiers, args['load_classifiers'])
+        if frozen_optims is not None:
+            classifiers_optimizers = frozen_optims
     else:
         best_val_recall1 = start_epoch_num = 0
 

@@ -36,28 +36,9 @@ def save_checkpoint(state: dict, is_best: bool, output_folder: str,
 def resume_train(device: str, args: Dict, output_folder: str, model: torch.nn.Module,
                  model_optimizer: Type[torch.optim.Optimizer], classifiers: List[MarginCosineProduct],
                  classifiers_optimizers: List[Type[torch.optim.Optimizer]]):
-    """Load model, optimizer, and other training parameters"""
+    """Load full training state: model, optimizer, classifiers, and epoch counter."""
     logging.info(f"Loading checkpoint: {args['resume_train']}")
     checkpoint = torch.load(args['resume_train'], map_location='cpu', weights_only=False)
-    
-    if args.get('load_classifiers'):
-        logging.info("Loading ONLY classifier weights from checkpoint.")
-        if "classifiers_state_dict" in checkpoint:
-            if len(checkpoint["classifiers_state_dict"]) == len(classifiers):
-                for c, sd in zip(classifiers, checkpoint["classifiers_state_dict"]):
-                    c = c.to(device)
-                    c.load_state_dict(sd)
-                    c = c.cpu()
-                for c in classifiers:
-                    for p in c.parameters():
-                        p.requires_grad = False
-                logging.info("Classifiers weights loaded successfully and frozen for the rest of training.")
-                return model, model_optimizer, classifiers, [None] * len(classifiers), 0, 0
-            else:
-                logging.warning(f"Skipping classifiers load: Checkpoint has {len(checkpoint['classifiers_state_dict'])} classifiers, config has {len(classifiers)}.")
-        else:
-            logging.warning("No classifiers_state_dict found in checkpoint.")
-        return model, model_optimizer, classifiers, classifiers_optimizers, 0, 0
 
     start_epoch_num = checkpoint["epoch_num"]
     
