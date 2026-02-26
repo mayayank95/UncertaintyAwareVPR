@@ -65,6 +65,8 @@ def _cal_recall(predictions: np.ndarray, positives_per_query: List, n_values: Li
 
 def _cal_apk(positives, prediction, k):
     """Average precision at K for a single query."""
+    if len(positives) == 0 or k == 0:
+        return 0.0
     if len(prediction) > k:
         prediction = prediction[:k]
     score = 0.0
