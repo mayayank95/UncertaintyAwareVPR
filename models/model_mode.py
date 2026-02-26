@@ -46,16 +46,15 @@ class Uncertainty(GeoLocalizationNet):
             # Create a separate aggregation module for variance (copy of the mean aggregation)
             self.variance_aggregation = copy.deepcopy(self.aggregation)
 
+        activation = nn.Sigmoid() if opt.get("variance_activation", "softplus") == "sigmoid" else nn.Softplus()
         if opt.get("use_variance_linear", False):
             descriptors_dimension = opt.get("descriptors_dimension", 512)
             self.var_head = nn.Sequential(
                 nn.Linear(descriptors_dimension, descriptors_dimension),
-                nn.Softplus()
+                activation
             )
         else:
-            self.var_head = nn.Sequential(
-                nn.Softplus()
-            )
+            self.var_head = nn.Sequential(activation)
         self.final_l2 = L2Norm()
 
     def forward(self, inputs):
