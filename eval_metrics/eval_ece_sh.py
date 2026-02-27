@@ -214,7 +214,11 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
     try:
         import matplotlib.pyplot as plt
 
-        n_plots = 4 if "ap" in metrics else 3
+        # Count all panels: bin dist + recall + map + ap (optional) + weights
+        n_plots = 1 + (1 if "recall" in metrics else 0) + (1 if "map" in metrics else 0)
+        if "ap" in metrics and bin_ap is not None:
+            n_plots += 1
+        n_plots += 1  # weights
         n_cols = 2
         n_rows = (n_plots + 1) // 2
         fig, axs = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows), squeeze=False)
