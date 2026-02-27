@@ -40,17 +40,23 @@ def draw_box(img, c=(0, 1, 0), thickness=20):
     return tfm.ToPILImage()(img)
 
 
-def build_prediction_image(images_paths, preds_correct):
+def build_prediction_image(images_paths, preds_correct, distances=None, query_variance=None):
     """Build a row of images, where the first is the query and the rest are predictions.
     For each image, if is_correct then draw a green/red box.
+    distances: optional list of L2 distances for each prediction (after Query).
+    query_variance: optional float, query's mean variance (uncertainty).
     """
     assert len(images_paths) == len(preds_correct)
-    labels = ["Query"]
+    query_label = "Query"
+    if query_variance is not None:
+        query_label += f" (var: {query_variance:.3f})"
+    labels = [query_label]
     for i, is_correct in enumerate(preds_correct[1:]):
+        dist_str = f" (dist: {distances[i]:.3f})" if distances is not None else ""
         if is_correct is None:
-            labels.append(f"Pred{i}")
+            labels.append(f"Pred{i}{dist_str}")
         else:
-            labels.append(f"Pred{i} - {is_correct}")
+            labels.append(f"Pred{i} - {is_correct}{dist_str}")
 
     images = [Image.open(path).convert("RGB") for path in images_paths]
     for img_idx, (img, is_correct) in enumerate(zip(images, preds_correct)):
@@ -80,12 +86,18 @@ def build_prediction_image(images_paths, preds_correct):
     return final_image
 
 
-def save_file_with_paths(query_path, preds_paths, positives_paths, output_path, use_labels=True):
+def save_file_with_paths(query_path, preds_paths, positives_paths, output_path, use_labels=True, distances=None,
+                         query_variance=None):
     file_content = []
     file_content.append("Query path:")
-    file_content.append(query_path + "\n")
-    file_content.append("Predictions paths:")
-    file_content.append("\n".join(preds_paths) + "\n")
+    file_content.append(query_path)
+    if query_variance is not None:
+        file_content.append(f"Query variance: {query_variance:.4f}")
+    file_content.append("\nPredictions paths:")
+    for i, p in enumerate(preds_paths):
+        dist_str = f"  (dist: {distances[i]:.4f})" if distances is not None else ""
+        file_content.append(f"{p}{dist_str}")
+    file_content.append("\n")
     if use_labels:
         file_content.append("Positives paths:")
         file_content.append("\n".join(positives_paths) + "\n")
@@ -93,7 +105,8 @@ def save_file_with_paths(query_path, preds_paths, positives_paths, output_path, 
         _ = file.write("\n".join(file_content))
 
 
-def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_labels=True, num_preds_to_viz=None):
+def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_labels=True, num_preds_to_viz=None,
+               distances=None, query_variances=None):
     """For each query, save an image containing the query and its predictions,
     and a file with the paths of the query, its predictions and its positives.
 
@@ -105,6 +118,8 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
     log_dir : Path with the path to save the predictions
     save_only_wrong_preds : bool, if True save only the wrongly predicted queries,
         i.e. the ones where the first pred is uncorrect (further than 25 m)
+    distances : np.array of shape [num_queries x num_preds], optional. L2 distance per prediction.
+    query_variances : np.array of shape [num_queries], optional. Mean variance (uncertainty) per query.
     """
     if use_labels:
         positives_per_query = eval_ds.get_positives()
@@ -129,7 +144,10 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
         if save_only_wrong_preds and preds_correct[1]:
             continue
 
-        prediction_image = build_prediction_image(list_of_images_paths, preds_correct)
+        query_dists = distances[query_index].tolist() if distances is not None else None
+        q_var = float(query_variances[query_index]) if query_variances is not None else None
+        prediction_image = build_prediction_image(list_of_images_paths, preds_correct, distances=query_dists,
+                                                 query_variance=q_var)
         pred_image_path = viz_dir / f"{query_index:03d}.jpg"
         prediction_image.save(pred_image_path)
 
@@ -143,6 +161,8 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
             positives_paths=positives_paths,
             output_path=viz_dir / f"{query_index:03d}.txt",
             use_labels=use_labels,
+            distances=query_dists,
+            query_variance=q_var,
         )
 
 def main():

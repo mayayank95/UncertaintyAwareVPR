@@ -88,7 +88,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
     # --- 2. Similarity Search & Recalls ---
     faiss_index = faiss.IndexFlatL2(args['descriptors_dimension'])
     faiss_index.add(db_desc)
-    _, predictions = faiss_index.search(q_desc, max(args['recall_values']))
+    distances, predictions = faiss_index.search(q_desc, max(args['recall_values']))
 
     recalls_str = "Labels not available"
     recalls = np.zeros(len(args['recall_values']))
@@ -119,17 +119,23 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path):
                 q_variances = q_variances[:1]
             if args.get('normalize_variance'):
                 q_variances = normalize_variance(q_variances, args['normalize_variance'])
+            ece_metrics = args.get('ece_metrics') or ['recall', 'map']
             compute_ece(
                 predictions, positives_per_query, q_variances,
                 n_values=args['recall_values'],
                 output_dir=dataset_output_dir if not args['dry_run'] else None,
+                metrics=ece_metrics,
+                distances=distances,
             )
     # --- 4. Visualizations ---
     if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == ['test']:
+        preds_to_save = predictions[:, :args['num_preds_to_save']]
+        pred_distances = distances[:, :args['num_preds_to_save']]
+        query_variances = np.mean(all_variances[test_ds.num_database:], axis=1)
         visualizations.save_preds(
-            predictions[:, :args['num_preds_to_save']], 
-            test_ds, str(dataset_output_dir), 
-            args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save']
+            preds_to_save, test_ds, str(dataset_output_dir),
+            args['save_only_wrong_preds'], args['use_labels'], args['num_queries_to_save'],
+            distances=pred_distances, query_variances=query_variances,
         )
 
     if args['datasets_type'] == ['test']:

@@ -98,6 +98,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--freeze_model", action="store_true", help="Freeze backbone/aggregation, train only the uncertainty head")
     p.add_argument("--normalize_variance", type=str, default=None, choices=["minmax", "zscore"],
                    help="Normalize query variances before ECE: 'minmax' scales to [0,1], 'zscore' standardizes to mean=0/std=1")
+    p.add_argument("--ece_metrics", type=str, default="recall,map,ap",
+                   help="ECE metrics to compute: comma-separated, e.g. 'recall,map' or 'recall,map,ap'")
 
     return p.parse_args()
     
@@ -140,6 +142,13 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
                 out[element] = "all"
             else:
                 out[element] = [s.strip() for s in v.split(",") if s.strip()]
+
+    if "ece_metrics" in out and out["ece_metrics"] is not None:
+        v = out["ece_metrics"]
+        if isinstance(v, list):
+            pass
+        else:
+            out["ece_metrics"] = [s.strip().lower() for s in str(v).split(",") if s.strip()]
 
     # Device auto-detection
     requested_device = str(out.get("device", "auto")).lower()

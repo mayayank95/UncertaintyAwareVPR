@@ -83,6 +83,30 @@ def _cal_mapk(predictions, positives_per_query, k):
     return np.mean([_cal_apk(pos, pred, k) for pos, pred in zip(positives_per_query, predictions)])
 
 
+def _bin_pr(predictions: np.ndarray, distances: np.ndarray, positives_per_query: List):
+    """Precision-recall curve by sweeping distance threshold. Returns (recalls, precisions) for AP integration."""
+    dists_u = np.linspace(np.min(distances[:, 0]), np.max(distances[:, 0]), num=100)
+    recalls, precisions = [], []
+    for th in dists_u:
+        tp = fp = fn = tn = 0
+        for q in range(distances.shape[0]):
+            if distances[q, 0] < th:
+                if np.any(np.in1d(predictions[q, 0], positives_per_query[q])):
+                    tp += 1
+                else:
+                    fp += 1
+            else:
+                if np.any(np.in1d(predictions[q, 0], positives_per_query[q])):
+                    fn += 1
+                else:
+                    tn += 1
+        if (tp + fn) == 0 or (tp + fp) == 0:
+            continue
+        recalls.append(tp / (tp + fn))
+        precisions.append(tp / (tp + fp))
+    return recalls, precisions
+
+
 def compute_ece(
     predictions: np.ndarray,
     positives_per_query: List,
@@ -90,6 +114,8 @@ def compute_ece(
     n_values: List[int] = [1, 5, 10],
     num_bins: int = 11,
     output_dir: Optional[Path] = None,
+    metrics: Optional[List[str]] = None,
+    distances: Optional[np.ndarray] = None,
 ) -> Dict:
     """Compute Expected Calibration Error for uncertainty-aware retrieval.
 
@@ -100,10 +126,13 @@ def compute_ece(
         n_values: recall@N values to evaluate.
         num_bins: number of bin edges (actual bins = num_bins - 1).
         output_dir: if provided, save ECE plot here.
+        metrics: list of metrics to compute: 'recall', 'map', 'ap'. Default ['recall', 'map'].
+        distances: [num_queries, max_k] L2 distances per prediction. Required for 'ap'.
 
     Returns:
-        dict with 'ece_recall', 'ece_map', 'bin_recalls', 'bin_map', 'bin_weights'.
+        dict with ece_recall, ece_map, ece_ap (when included), bin_*.
     """
+    metrics = metrics or ["recall", "map"]
     mean_var = np.mean(query_variances, axis=-1)
     bin_indices, zoom_k = _get_zoomed_bins(mean_var, num_bins)
     num_actual_bins = num_bins - 1
@@ -111,10 +140,12 @@ def compute_ece(
 
     bin_recalls = np.zeros((num_actual_bins, len(n_values)))
     bin_map = np.zeros((num_actual_bins, len(n_values)))
+    bin_ap = np.zeros(num_actual_bins) if "ap" in metrics else None
     bin_weights = np.zeros(num_actual_bins)
 
     ece_recall = np.zeros(len(n_values))
     ece_map = np.zeros(len(n_values))
+    ece_ap = 0.0 if "ap" in metrics else None
 
     for b, q_in_bin in enumerate(bin_indices):
         if len(q_in_bin) == 0:
@@ -127,72 +158,116 @@ def compute_ece(
         # Expected performance: linearly decreasing from 1.0 (low uncertainty) to 0.0 (high uncertainty)
         expected = (num_actual_bins - 1 - b) / (num_actual_bins - 1)
 
-        # Recall@N
-        recall_at_n = _cal_recall(bin_preds, bin_positives, n_values)
-        bin_recalls[b] = recall_at_n
-        for i in range(len(n_values)):
-            ece_recall[i] += bin_weights[b] * abs(recall_at_n[i] / 100.0 - expected)
+        if "recall" in metrics:
+            recall_at_n = _cal_recall(bin_preds, bin_positives, n_values)
+            bin_recalls[b] = recall_at_n
+            for i in range(len(n_values)):
+                ece_recall[i] += bin_weights[b] * abs(recall_at_n[i] / 100.0 - expected)
 
-        # mAP@N
-        map_at_n = [_cal_mapk(bin_preds, bin_positives, n) for n in n_values]
-        bin_map[b] = map_at_n
-        for i in range(len(n_values)):
-            ece_map[i] += bin_weights[b] * abs(map_at_n[i] / 100.0 - expected)
+        if "map" in metrics:
+            map_at_n = [_cal_mapk(bin_preds, bin_positives, n) for n in n_values]
+            bin_map[b] = map_at_n
+            for i in range(len(n_values)):
+                ece_map[i] += bin_weights[b] * abs(map_at_n[i] / 100.0 - expected)
+
+        if "ap" in metrics and distances is not None:
+            bin_dists = distances[q_in_bin]
+            recalls_pr, precisions_pr = _bin_pr(bin_preds, bin_dists, bin_positives)
+            ap = 0.0
+            for j in range(len(recalls_pr) - 1):
+                ap += precisions_pr[j] * (recalls_pr[j + 1] - recalls_pr[j])
+            bin_ap[b] = ap
+            ece_ap += bin_weights[b] * abs(ap - expected)
 
     # Log results
-    ece_rec_str = "/".join([f"{e:.3f}" for e in ece_recall])
-    ece_map_str = "/".join([f"{e:.3f}" for e in ece_map])
     n_str = "/".join([str(n) for n in n_values])
-    logger.info(f"ECE_R@{n_str}: {ece_rec_str}  (zoom_k={zoom_k})")
-    logger.info(f"ECE_mAP@{n_str}: {ece_map_str}")
+    if "recall" in metrics:
+        ece_rec_str = "/".join([f"{e:.3f}" for e in ece_recall])
+        logger.info(f"ECE_R@{n_str}: {ece_rec_str}  (zoom_k={zoom_k})")
+    if "map" in metrics:
+        ece_map_str = "/".join([f"{e:.3f}" for e in ece_map])
+        logger.info(f"ECE_mAP@{n_str}: {ece_map_str}")
+    if "ap" in metrics and ece_ap is not None:
+        logger.info(f"ECE_AP: {ece_ap:.3f}")
 
     if output_dir:
-        _plot_ece(bin_recalls, bin_map, bin_weights, bin_indices, n_values, num_actual_bins, output_dir)
+        _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, num_actual_bins,
+                 output_dir, metrics)
 
-    return {
-        "ece_recall": {n: e for n, e in zip(n_values, ece_recall)},
-        "ece_map": {n: e for n, e in zip(n_values, ece_map)},
+    result = {
         "bin_recalls": bin_recalls,
         "bin_map": bin_map,
         "bin_weights": bin_weights,
     }
+    if "recall" in metrics:
+        result["ece_recall"] = {n: e for n, e in zip(n_values, ece_recall)}
+    if "map" in metrics:
+        result["ece_map"] = {n: e for n, e in zip(n_values, ece_map)}
+    if "ap" in metrics:
+        result["ece_ap"] = ece_ap
+        result["bin_ap"] = bin_ap
+    return result
 
 
-def _plot_ece(bin_recalls, bin_map, bin_weights, bin_indices, n_values, num_bins, output_dir):
+def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, num_bins, output_dir, metrics):
     """Save ECE visualization plot."""
     try:
         import matplotlib.pyplot as plt
 
-        fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+        n_plots = 4 if "ap" in metrics else 3
+        n_cols = 2
+        n_rows = (n_plots + 1) // 2
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows), squeeze=False)
+
+        x = np.arange(num_bins)
+        idx = 0
 
         # Bin distribution
-        ax = axs[0][0]
-        ax.bar(range(num_bins), [len(x) for x in bin_indices])
+        ax = axs[idx // n_cols, idx % n_cols]
+        ax.bar(range(num_bins), [len(b) for b in bin_indices])
         ax.set_xlabel("σ² (uncertainty: low → high)")
         ax.set_ylabel("Number of samples")
+        idx += 1
 
         # Recall per bin
-        ax = axs[0][1]
-        x = np.arange(num_bins)
-        for i, n in enumerate(n_values):
-            ax.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
-        ax.set_xlabel("σ² (uncertainty: low → high)")
-        ax.set_ylabel("Recall@N")
-        ax.legend()
+        if "recall" in metrics:
+            ax = axs[idx // n_cols, idx % n_cols]
+            for i, n in enumerate(n_values):
+                ax.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
+            ax.set_xlabel("σ² (uncertainty: low → high)")
+            ax.set_ylabel("Recall@N")
+            ax.legend()
+            idx += 1
 
         # mAP per bin
-        ax = axs[1][0]
-        for i, n in enumerate(n_values):
-            ax.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
-        ax.set_xlabel("σ² (uncertainty: low → high)")
-        ax.set_ylabel("mAP@N")
-        ax.legend()
+        if "map" in metrics:
+            ax = axs[idx // n_cols, idx % n_cols]
+            for i, n in enumerate(n_values):
+                ax.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
+            ax.set_xlabel("σ² (uncertainty: low → high)")
+            ax.set_ylabel("mAP@N")
+            ax.legend()
+            idx += 1
+
+        # AP per bin (when included)
+        if "ap" in metrics and bin_ap is not None:
+            ax = axs[idx // n_cols, idx % n_cols]
+            ax.plot(x, bin_ap, marker="o", label="AP")
+            ax.set_xlabel("σ² (uncertainty: low → high)")
+            ax.set_ylabel("AP")
+            ax.legend()
+            idx += 1
 
         # Weights
-        ax = axs[1][1]
+        ax = axs[idx // n_cols, idx % n_cols]
         ax.bar(range(num_bins), bin_weights)
         ax.set_xlabel("σ² (uncertainty: low → high)")
         ax.set_ylabel("Bin weight (fraction of queries)")
+        idx += 1
+
+        # Hide unused subplots
+        for j in range(idx, n_rows * n_cols):
+            axs[j // n_cols, j % n_cols].set_visible(False)
 
         plt.tight_layout()
         plt.savefig(Path(output_dir) / "ece_plot.png", dpi=150)
