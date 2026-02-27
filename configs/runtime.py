@@ -1,8 +1,8 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
-
+from typing import Any, Dict, List, Optional, Tuple
+import wandb
 import torch
 
 from configs.parser import build_config
@@ -31,3 +31,56 @@ def init_model(args: Dict[str, Any]):
     model = model.to(device)
     return device, model
 
+
+def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
+    """Build default run name from losses and optional flags."""
+    losses = args.get("losses") or "ce"
+    if isinstance(losses, list):
+        losses_str = "_".join(str(l).strip() for l in losses) if losses else "ce"
+    else:
+        losses_str = str(losses).replace(",", "_").replace(" ", "").strip() or "ce"
+    parts = [job_type, losses_str]
+    if args.get("load_classifiers"):
+        parts.append("load_clf")
+    if args.get("freeze_model"):
+        parts.append("freeze")
+    if args.get("resume_model"):
+        parts.append("resume_model")
+    if args.get("resume_train"):
+        parts.append("resume_train")
+    return "_".join(parts)
+
+
+def init_wandb(args: Dict[str, Any], job_type: str = "train") -> bool:
+    """Initialize Weights & Biases run if use_wandb is enabled. Returns True if initialized."""
+    if not args.get("use_wandb"):
+        return False
+    run_name = args.get("wandb_run_name") or _default_wandb_run_name(args, job_type)
+    if isinstance(run_name, Path):
+        run_name = run_name.name
+    wandb.init(
+        project=args.get("wandb_project", "UncertaintyAwareVPR"),
+        name=run_name,
+        config=dict(args),
+        job_type=job_type,
+    )
+    return True
+
+
+def log_wandb(metrics: Dict[str, Any], step: Optional[int] = None) -> None:
+    """Log metrics to W&B if a run is active. No-op otherwise."""
+    if wandb.run is not None:
+        wandb.log(metrics, step=step)
+
+
+def log_wandb_images(images: Dict[str, Path], step: Optional[int] = None) -> None:
+    """Log image files to W&B (e.g. plots). Keys become metric names. Skips missing files."""
+    if not images or wandb.run is None:
+        return
+    to_log = {}
+    for key, path in images.items():
+        p = Path(path)
+        if p.exists():
+            to_log[key] = wandb.Image(str(p))
+    if to_log:
+        wandb.log(to_log, step=step)

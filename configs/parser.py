@@ -24,6 +24,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--logs_folder", type=str, default=None, help="Folder to save logs")
     p.add_argument("--colab", action="store_true", help="Run in Google Colab mode")
     p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations")
+    p.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
+    p.add_argument("--wandb_project", type=str, default="UncertaintyAwareVPR", help="W&B project name")
+    p.add_argument("--wandb_run_name", type=str, default=None, help="W&B run name (default: auto from define function in runtime.py)")
 
     # Dataset selection
     p.add_argument("--datasets", type=str, default=None, help='Datasets to process (e.g. "all", "sf_xl", or "sf_xl,pitts30k")')

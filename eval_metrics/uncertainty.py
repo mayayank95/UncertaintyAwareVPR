@@ -81,33 +81,62 @@ def normalize_variance(variances: np.ndarray, method: str) -> np.ndarray:
     return variances * (scale / (mean_var + 1e-12))
 
 
-def compute_uncertainty_statistics(all_variances, output_dir=None):
+def plot_variance_distribution(all_variances, output_dir, num_database=None):
     """
-    Computes and logs statistics about the uncertainty values.
+    Save a figure with variance distribution: (1) all variance values, (2) per-vector mean variance (db vs query if num_database given).
+    """
+    try:
+        import matplotlib.pyplot as plt
+        out_path = Path(output_dir)
+        # (1) All variance elements
+        flat = all_variances.flatten()
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+        axs[0].hist(flat, bins=50, alpha=0.7, color='steelblue', edgecolor='black')
+        axs[0].set_title("Distribution of variance (all elements)")
+        axs[0].set_xlabel("Variance σ²")
+        axs[0].set_ylabel("Frequency")
+        axs[0].grid(True, alpha=0.3)
+
+        # (2) Per-vector mean variance
+        mean_per_vector = np.mean(all_variances, axis=1)
+        if num_database is not None and num_database < len(mean_per_vector):
+            db_means = mean_per_vector[:num_database]
+            q_means = mean_per_vector[num_database:]
+            axs[1].hist(db_means, bins=40, alpha=0.6, color='green', label='Database', edgecolor='black')
+            axs[1].hist(q_means, bins=40, alpha=0.6, color='coral', label='Queries', edgecolor='black')
+            axs[1].set_title("Per-vector mean variance (database vs queries)")
+        else:
+            axs[1].hist(mean_per_vector, bins=50, alpha=0.7, color='steelblue', edgecolor='black')
+            axs[1].set_title("Per-vector mean variance")
+        axs[1].set_xlabel("Mean variance σ²")
+        axs[1].set_ylabel("Frequency")
+        axs[1].legend()
+        axs[1].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(out_path / "variance_distribution.png", dpi=150)
+        plt.close()
+        logger.info(f"Variance distribution plot saved to {out_path / 'variance_distribution.png'}")
+    except ImportError:
+        logger.warning("matplotlib not installed, skipping variance distribution plot.")
+
+
+def compute_uncertainty_statistics(all_variances, output_dir=None, num_database=None):
+    """
+    Computes and logs statistics about the uncertainty values, and saves variance distribution plot.
     """
     mean_var = np.mean(all_variances)
     min_var = np.min(all_variances)
     max_var = np.max(all_variances)
     std_var = np.std(all_variances)
     median_var = np.median(all_variances)
-    
+
     logger.info(
         f"Variance Statistics - Mean: {mean_var:.4e}, Min: {min_var:.4e}, Max: {max_var:.4e}, Std: {std_var:.4e}, Median: {median_var:.4e}"
     )
 
     if output_dir:
-        try:
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(10, 6))
-            plt.hist(all_variances.flatten(), bins=50, alpha=0.7, color='blue', edgecolor='black')
-            plt.title("Histogram of Uncertainty Values (Variances)")
-            plt.xlabel("Variance")
-            plt.ylabel("Frequency")
-            plt.grid(True, alpha=0.3)
-            plt.savefig(Path(output_dir) / "uncertainty_histogram.png")
-            plt.close()
-        except ImportError:
-            logger.warning("matplotlib not installed, skipping uncertainty histogram.")
+        plot_variance_distribution(all_variances, output_dir, num_database=num_database)
 
     return {
         "mean": mean_var,

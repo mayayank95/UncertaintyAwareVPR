@@ -8,7 +8,7 @@ import torch
 import torchvision.transforms as T
 from tqdm import tqdm
 
-from configs.runtime import build_config_and_datasets, init_model
+from configs.runtime import build_config_and_datasets, init_model, init_wandb, log_wandb
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
 from eval import eval_dataset
@@ -107,7 +107,7 @@ def train(args, model, device, dataset_name, datasets_dir):
 
     if args.get('resume_train') or args.get('resume_model'):
         logger.info("Verifying resumed model performance...")
-        _, resume_recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        _, resume_recalls_str, _, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
         logger.info(f"Resumed model performance: {resume_recalls_str}")
 
     # ---- Training loop ----
@@ -223,11 +223,33 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, recalls_str, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        recalls, recalls_str, uncertainty_corr, mean_query_variance = eval_dataset(
+            args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num
+        )
         logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {recalls_str}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
-        
+
+        # W&B logging
+        epoch_metrics = {"epoch": epoch_num, "val/recall@1": recalls[0], "val/best_recall@1": best_val_recall1}
+        for i, k in enumerate(args.get("recall_values", [1, 5, 10, 20])):
+            if i < len(recalls):
+                epoch_metrics[f"val/recall@{k}"] = recalls[i]
+        if "uncertainty" in active_losses and epoch_variances:
+            epoch_metrics["train/mean_variance"] = float(np.mean(epoch_variances))
+            epoch_metrics["train/std_variance"] = float(np.std(epoch_variances))
+        if active_losses:
+            epoch_metrics["train/loss"] = np.mean(epoch_losses)
+        if "ce" in active_losses:
+            epoch_metrics["train/loss_ce"] = np.mean(epoch_losses_ce)
+        if "uncertainty" in active_losses:
+            epoch_metrics["train/loss_uncertainty"] = np.mean(epoch_losses_gnll)
+        if uncertainty_corr is not None:
+            epoch_metrics["val/uncertainty_correlation"] = uncertainty_corr
+        if mean_query_variance is not None:
+            epoch_metrics["val/mean_variance"] = mean_query_variance
+        log_wandb(epoch_metrics, step=epoch_num)
+
         if is_best:
             not_improved_count = 0
         else:
@@ -259,6 +281,7 @@ def train(args, model, device, dataset_name, datasets_dir):
 if __name__ == "__main__":
     # ---- Load config and datasets (shared helper) ----
     cfg, entries, datasets_dir = build_config_and_datasets()
+    init_wandb(cfg, job_type="train")
 
     # Training-specific setup
     commons.make_deterministic(cfg["seed"])
