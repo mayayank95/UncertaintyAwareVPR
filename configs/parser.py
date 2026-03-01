@@ -61,6 +61,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_preds_to_save", type=int, default=3, help="Number of predictions to save per query")
     p.add_argument("--num_queries_to_save", type=int, default=3, help="Number of queries to save predictions for")
     p.add_argument("--save_only_wrong_preds", action="store_true", help="Only save wrongly predicted queries")
+    p.add_argument("--save_plots", action="store_true", help="Save evaluation plots (variance distribution, ECE, predictions) for val/test splits")
 
     # Training
     p.add_argument("--cudnn_benchmark", action="store_true", help="Enable cuDNN benchmark (faster but non-deterministic)")

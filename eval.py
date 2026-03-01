@@ -142,8 +142,10 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
                     ece_log["ece/ap"] = ece_result["ece_ap"]
                 if ece_log:
                     log_wandb(ece_log, step=wandb_step)
-    # --- 4. Visualizations ---
-    if args.get('num_preds_to_save', 0) != 0 and not args['dry_run'] and args['datasets_type'] == ['test']:
+    # --- 4. Visualizations & Plots ---
+    save_plots = args.get("save_plots", False) and not args["dry_run"]
+
+    if save_plots and args.get('num_preds_to_save', 0) != 0:
         preds_to_save = predictions[:, :args['num_preds_to_save']]
         pred_distances = distances[:, :args['num_preds_to_save']]
         query_variances = np.mean(all_variances[test_ds.num_database:], axis=1)
@@ -153,19 +155,19 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             distances=pred_distances, query_variances=query_variances,
         )
 
-    if args['datasets_type'] == ['test']:
+    if save_plots:
         logger.info(f"Results for {dataset_name}: {recalls_str}")
-    if args['model_mode'] == "uncertainty" and args['datasets_type'] == ['test']:
+    if args['model_mode'] == "uncertainty" and save_plots:
         if uncertainty_corr is not None:
             logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")
         compute_uncertainty_statistics(
             all_variances,
-            dataset_output_dir if not args['dry_run'] else None,
+            dataset_output_dir,
             num_database=test_ds.num_database,
         )
 
     # Log plot images to W&B when saved to disk
-    if args.get("use_wandb") and not args["dry_run"] and dataset_output_dir.exists():
+    if args.get("use_wandb") and save_plots and dataset_output_dir.exists():
         log_wandb_images(
             {
                 f"eval/{dataset_name}/variance_distribution": dataset_output_dir / "variance_distribution.png",
