@@ -55,8 +55,7 @@ def train(args, model, device, dataset_name, datasets_dir):
             uncertainty_criterion = torch.nn.GaussianNLLLoss()
         uncertainty_lambda = args.get('uncertainty_lambda', 1.0)
         logger.info(f"Using uncertainty loss: {uncertainty_loss_type}")
-        if args.get('separate_variance_aggregation'):
-            logger.info("Using separate aggregation for variance.")
+        logger.info(f"Variance head type: {args.get('var_head_type', 'linear')}")
     model_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args['lr'])
 
     train_set_folder = f"{datasets_dir[dataset_name]['train']}"
@@ -107,7 +106,7 @@ def train(args, model, device, dataset_name, datasets_dir):
 
     if args.get('resume_train') or args.get('resume_model'):
         logger.info("Verifying resumed model performance...")
-        _, resume_recalls_str, _, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
+        _, resume_recalls_str, _, _, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
         logger.info(f"Resumed model performance: {resume_recalls_str}")
 
     # ---- Training loop ----
@@ -223,7 +222,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, recalls_str, uncertainty_corr, mean_query_variance = eval_dataset(
+        recalls, recalls_str, uncertainty_corr, mean_query_variance, eval_wandb_metrics = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num
         )
         logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {recalls_str}")
@@ -231,23 +230,24 @@ def train(args, model, device, dataset_name, datasets_dir):
         best_val_recall1 = max(recalls[0], best_val_recall1)
 
         # W&B logging
-        epoch_metrics = {"epoch": epoch_num, "val/recall@1": recalls[0], "val/best_recall@1": best_val_recall1}
+        epoch_metrics = {"epoch": epoch_num, "val/recall@1": float(recalls[0]), "val/best_recall@1": float(best_val_recall1)}
         for i, k in enumerate(args.get("recall_values", [1, 5, 10, 20])):
             if i < len(recalls):
-                epoch_metrics[f"val/recall@{k}"] = recalls[i]
+                epoch_metrics[f"val/recall@{k}"] = float(recalls[i])
         if "uncertainty" in active_losses and epoch_variances:
             epoch_metrics["train/mean_variance"] = float(np.mean(epoch_variances))
             epoch_metrics["train/std_variance"] = float(np.std(epoch_variances))
         if active_losses:
-            epoch_metrics["train/loss"] = np.mean(epoch_losses)
+            epoch_metrics["train/loss"] = float(np.mean(epoch_losses))
         if "ce" in active_losses:
-            epoch_metrics["train/loss_ce"] = np.mean(epoch_losses_ce)
+            epoch_metrics["train/loss_ce"] = float(np.mean(epoch_losses_ce))
         if "uncertainty" in active_losses:
-            epoch_metrics["train/loss_uncertainty"] = np.mean(epoch_losses_gnll)
+            epoch_metrics["train/loss_uncertainty"] = float(np.mean(epoch_losses_gnll))
         if uncertainty_corr is not None:
-            epoch_metrics["val/uncertainty_correlation"] = uncertainty_corr
+            epoch_metrics["val/uncertainty_correlation"] = float(uncertainty_corr)
         if mean_query_variance is not None:
-            epoch_metrics["val/mean_variance"] = mean_query_variance
+            epoch_metrics["val/mean_variance"] = float(mean_query_variance)
+        epoch_metrics.update(eval_wandb_metrics)
         log_wandb(epoch_metrics, step=epoch_num)
 
         if is_best:
@@ -300,3 +300,7 @@ if __name__ == "__main__":
         logger.info(f"Training dataset: {e['name']}")
         train(cfg, model, device, e["name"], datasets_dir)
     logger.info("Training completed.")
+
+    if cfg.get("use_wandb"):
+        import wandb
+        wandb.finish()

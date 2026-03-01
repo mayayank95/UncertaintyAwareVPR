@@ -110,6 +110,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
     # --- 3. Uncertainty Metrics ---
     uncertainty_corr = None
     mean_query_variance = None
+    ece_result = None
     if args['model_mode'] == "uncertainty":
         q_var = all_variances[test_ds.num_database:]
         mean_query_variance = float(np.mean(q_var)) if len(q_var) > 0 else None
@@ -130,18 +131,6 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
                 metrics=ece_metrics,
                 distances=distances,
             )
-            if args.get('use_wandb') and ece_result:
-                ece_log = {}
-                if "ece_recall" in ece_result:
-                    for n, v in ece_result["ece_recall"].items():
-                        ece_log[f"ece/recall@{n}"] = v
-                if "ece_map" in ece_result:
-                    for n, v in ece_result["ece_map"].items():
-                        ece_log[f"ece/map@{n}"] = v
-                if "ece_ap" in ece_result:
-                    ece_log["ece/ap"] = ece_result["ece_ap"]
-                if ece_log:
-                    log_wandb(ece_log, step=wandb_step)
     # --- 4. Visualizations & Plots ---
     save_plots = args.get("save_plots", False) and not args["dry_run"]
 
@@ -166,7 +155,19 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             num_database=test_ds.num_database,
         )
 
-    # Log plot images to W&B when saved to disk
+    # Collect all W&B metrics for the caller to log in a single call
+    wandb_metrics = {}
+    if ece_result:
+        if "ece_recall" in ece_result:
+            for n, v in ece_result["ece_recall"].items():
+                wandb_metrics[f"ece/recall@{n}"] = float(v)
+        if "ece_map" in ece_result:
+            for n, v in ece_result["ece_map"].items():
+                wandb_metrics[f"ece/map@{n}"] = float(v)
+        if "ece_ap" in ece_result:
+            wandb_metrics["ece/ap"] = float(ece_result["ece_ap"])
+
+    # Log plot images to W&B when saved to disk (images use separate wandb.log, OK at same step)
     if args.get("use_wandb") and save_plots and dataset_output_dir.exists():
         log_wandb_images(
             {
@@ -176,7 +177,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             step=wandb_step,
         )
 
-    return recalls, recalls_str, uncertainty_corr, mean_query_variance
+    return recalls, recalls_str, uncertainty_corr, mean_query_variance, wandb_metrics
 
 if __name__ == "__main__":
     # ---- Load config and datasets (shared helper) ----
@@ -192,17 +193,22 @@ if __name__ == "__main__":
         name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
 
-        recalls, r_str, corr, mean_var = eval_dataset(
+        recalls, r_str, corr, mean_var, eval_wb = eval_dataset(
             cfg, model, device, name, datasets_paths[name]["test"], wandb_step=None
         )
 
-        # Log final metrics to W&B for standalone eval
+        # Log all metrics to W&B in a single call
         if cfg.get("use_wandb"):
-            recall_metrics = {f"eval/{name}/recall@{k}": float(v) for k, v in zip(cfg.get("recall_values", [1, 5, 10, 20]), recalls)}
-            log_wandb(recall_metrics)
+            all_metrics = {f"eval/{name}/recall@{k}": float(v) for k, v in zip(cfg.get("recall_values", [1, 5, 10, 20]), recalls)}
             if corr is not None:
-                log_wandb({f"eval/{name}/uncertainty_correlation": float(corr)})
+                all_metrics[f"eval/{name}/uncertainty_correlation"] = float(corr)
             if mean_var is not None:
-                log_wandb({f"eval/{name}/mean_variance": float(mean_var)})
+                all_metrics[f"eval/{name}/mean_variance"] = float(mean_var)
+            all_metrics.update(eval_wb)
+            log_wandb(all_metrics)
 
     logger.info("=" * 30 + "\nAll processes finished.")
+
+    if cfg.get("use_wandb"):
+        import wandb
+        wandb.finish()

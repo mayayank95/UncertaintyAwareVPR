@@ -95,10 +95,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma_dim", type=int, default=None, help="Dimension of the variance output vector")
     p.add_argument("--uncertainty_lambda", type=float, default=1.0, help="Weight for the uncertainty loss")
     p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll or gaussian_cosine")
-    p.add_argument("--use_variance_linear", action="store_true", help="Add a linear layer before activation in the variance head")
+    p.add_argument("--var_head_type", type=str, default="linear",
+                   choices=["activation", "linear", "mlp", "separate_agg"],
+                   help="Variance head type: 'activation' (bare activation, no trainable params), "
+                        "'linear' (Linear + activation), 'mlp' (GeM + 2-layer MLP + activation), "
+                        "'separate_agg' (deep copy of aggregation + activation)")
+    p.add_argument("--var_init", action="store_true",
+                   help="Initialize variance head for stable start: small weights + bias tuned for ~0.1 initial variance")
     p.add_argument("--variance_activation", type=str, default=None, choices=["softplus", "sigmoid"],
                    help="Activation for variance head output: softplus (positive, unbounded) or sigmoid (bounded [0,1])")
-    p.add_argument("--separate_variance_aggregation", action="store_true", help="Use a separate aggregation module for variance")
     p.add_argument("--freeze_model", action="store_true", help="Freeze backbone/aggregation, train only the uncertainty head")
     p.add_argument("--normalize_variance", type=str, default=None, choices=["minmax", "zscore"],
                    help="Normalize query variances before ECE: 'minmax' scales to [0,1], 'zscore' standardizes to mean=0/std=1")
