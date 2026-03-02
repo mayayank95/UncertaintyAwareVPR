@@ -8,13 +8,13 @@ import torch
 import torchvision.transforms as T
 from tqdm import tqdm
 
-from configs.runtime import build_config_and_datasets, init_model, init_wandb, log_wandb
+from configs.runtime import build_config_and_datasets, init_model, init_wandb
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
 from eval import eval_dataset
 from losses import cosface_loss
 from losses.gaussian_cosine_loss import GaussianCosineLoss
-from utils import augmentations, commons, util
+from utils import augmentations, commons, util, wandb_utils
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +105,13 @@ def train(args, model, device, dataset_name, datasets_dir):
         best_val_recall1 = start_epoch_num = 0
 
     if args.get('resume_train') or args.get('resume_model'):
-        logger.info("Verifying resumed model performance...")
-        _, resume_recalls_str, _, _, _ = eval_dataset(args, model, device, dataset_name, val_set_folder)
-        logger.info(f"Resumed model performance: {resume_recalls_str}")
+        logger.info("Verifying resumed model performance (before any training)...")
+        init_recalls, _, init_corr, init_mean_var, init_min_var, init_max_var, _, _ = eval_dataset(
+            args, model, device, dataset_name, val_set_folder, log_dataset_info=False
+        )
+        _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
+        _xv = f"{init_max_var:.4f}" if init_max_var is not None else "N/A"
+        logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}, mean_var={_mv}, max_var={_xv}")
 
     # ---- Training loop ----
     logger.info("Start training ...")
@@ -222,33 +226,18 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, recalls_str, uncertainty_corr, mean_query_variance, eval_wandb_metrics = eval_dataset(
-            args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num
+        recalls, _, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images = eval_dataset(
+            args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False
         )
-        logger.info(f"Epoch {epoch_num:02d} in {str(datetime.now() - epoch_start_time)[:-7]}, {recalls_str}")
         is_best = recalls[0] > best_val_recall1
         best_val_recall1 = max(recalls[0], best_val_recall1)
 
-        # W&B logging
-        epoch_metrics = {"epoch": epoch_num, "val/recall@1": float(recalls[0]), "val/best_recall@1": float(best_val_recall1)}
-        for i, k in enumerate(args.get("recall_values", [1, 5, 10, 20])):
-            if i < len(recalls):
-                epoch_metrics[f"val/recall@{k}"] = float(recalls[i])
-        if "uncertainty" in active_losses and epoch_variances:
-            epoch_metrics["train/mean_variance"] = float(np.mean(epoch_variances))
-            epoch_metrics["train/std_variance"] = float(np.std(epoch_variances))
-        if active_losses:
-            epoch_metrics["train/loss"] = float(np.mean(epoch_losses))
-        if "ce" in active_losses:
-            epoch_metrics["train/loss_ce"] = float(np.mean(epoch_losses_ce))
-        if "uncertainty" in active_losses:
-            epoch_metrics["train/loss_uncertainty"] = float(np.mean(epoch_losses_gnll))
-        if uncertainty_corr is not None:
-            epoch_metrics["val/uncertainty_correlation"] = float(uncertainty_corr)
-        if mean_query_variance is not None:
-            epoch_metrics["val/mean_variance"] = float(mean_query_variance)
-        epoch_metrics.update(eval_wandb_metrics)
-        log_wandb(epoch_metrics, step=epoch_num)
+        wandb_utils.log_train_epoch(
+            args, epoch_num, recalls, best_val_recall1, active_losses,
+            epoch_variances, epoch_losses, epoch_losses_ce, epoch_losses_gnll,
+            uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance,
+            eval_wandb_metrics, eval_wandb_images,
+        )
 
         if is_best:
             not_improved_count = 0
@@ -301,6 +290,4 @@ if __name__ == "__main__":
         train(cfg, model, device, e["name"], datasets_dir)
     logger.info("Training completed.")
 
-    if cfg.get("use_wandb"):
-        import wandb
-        wandb.finish()
+    wandb_utils.finish_train_run(cfg)

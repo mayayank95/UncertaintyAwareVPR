@@ -3,16 +3,23 @@ from typing import Any, Dict
 
 import torch
 
-from models.model_mode import GeneralModelWrapper, deliver_model
+from models.model_mode import GeneralModelWrapper, deliver_model, _stable_var_init
 
 logger = logging.getLogger(__name__)
 
 
-def _load_weights(model: torch.nn.Module, checkpoint_path: str):
-    """Load model weights from a checkpoint file (strict=False to allow mismatches)."""
+def _load_weights(model: torch.nn.Module, checkpoint_path: str, skip_var_head: bool = False):
+    """Load model weights from a checkpoint file (strict=False to allow mismatches).
+    If skip_var_head is True, do not load var_head keys (keep build-time init, e.g. var_init)."""
     logger.info(f"Loading model weights from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = checkpoint.get("model_state_dict", checkpoint)
+    if skip_var_head:
+        n_before = len(state_dict)
+        state_dict = {k: v for k, v in state_dict.items() if "var_head" not in k}
+        n_skipped = n_before - len(state_dict)
+        if n_skipped:
+            logger.info("Skipping %d var_head key(s) from checkpoint (var_init); variance head keeps build-time init.", n_skipped)
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     if missing:
         logger.debug("State dict missing keys (left at default init): %s", missing)
@@ -35,7 +42,15 @@ def get_model(args: Dict[str, Any]) -> torch.nn.Module:
 
     resume_path = args.get("resume_model")
     if resume_path is not None:
-        _load_weights(model, resume_path)
+        # When var_init: don't load var_head from checkpoint, then force re-init
+        skip_var_head = bool(args.get("var_init"))
+        _load_weights(model, resume_path, skip_var_head=skip_var_head)
+        if skip_var_head:
+            root = getattr(model, "module", model)
+            if hasattr(root, "var_head"):
+                act = args.get("variance_activation", "softplus") or "softplus"
+                _stable_var_init(root.var_head, act)
+                logger.info("Variance head re-initialized (var_init) for stable start ~0.1.")
     elif method != "cosplace_pretrained":
         logger.info("No --resume_model provided. Model uses default weights (ImageNet).")
 
@@ -43,6 +58,7 @@ def get_model(args: Dict[str, Any]) -> torch.nn.Module:
         trainable = model.freeze_base()
         if not trainable:
             raise ValueError("--freeze_model: no trainable parameters remain. Nothing to train.")
-        logger.info(f"Base model frozen, training {len(trainable)} subclass params")
+        trainable_names = [n for n, p in model.named_parameters() if p.requires_grad]
+        logger.info(f"Base model frozen, training {len(trainable)} params: {trainable_names}")
 
     return model

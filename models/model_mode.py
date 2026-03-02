@@ -34,11 +34,11 @@ class Basic(GeoLocalizationNet):
 
 
 def _stable_var_init(module, activation="softplus", target_variance=0.1):
-    """Initialize variance head bias so the initial output is centered at target_variance.
-    Weights keep default Kaiming init for input sensitivity."""
+    """Initialize variance head bias so activation(0) ≈ target_variance.
+    Weights keep default (Kaiming) for input sensitivity."""
     if activation == "softplus":
         bias_val = math.log(math.exp(target_variance) - 1)
-    else:  # sigmoid: inverse sigmoid(target)
+    else:  # sigmoid
         bias_val = -math.log(1.0 / target_variance - 1)
     for m in module.modules():
         if isinstance(m, nn.Linear):
@@ -131,14 +131,55 @@ def deliver_model(opt):
 
 if __name__ == '__main__':
     default_opt = {"backbone": "ResNet18", "descriptors_dimension": 512}
-    x = torch.rand((1, 3, 224, 224))
+    x = torch.rand((4, 3, 224, 224))  # small batch to check variance stats
 
     basic = Basic(default_opt)
     print("Basic:", basic(x)[0].shape, basic(x)[1].shape)
 
+    # 1) Init check: var_init=True => mean variance ~0.1 for linear, mlp, separate_agg
+    print("\n--- Variance head init (var_init=True => mean variance ~0.1) ---")
     for vtype in ("activation", "linear", "mlp", "separate_agg"):
-        opt = {**default_opt, "var_head_type": vtype, "var_init": vtype not in ("activation", "separate_agg")}
+        # activation has no trainable params so var_init is N/A; others use var_init=True
+        use_init = vtype != "activation"
+        opt = {**default_opt, "var_head_type": vtype, "var_init": use_init}
         unc = Uncertainty(opt)
-        mu, var = unc(x)
+        unc.eval()
+        with torch.no_grad():
+            mu, var = unc(x)
+        mean_var = var.mean().item()
         trainable = sum(p.numel() for p in unc.parameters() if p.requires_grad)
-        print(f"Uncertainty ({vtype}): mu={mu.shape}, var={var.shape}, trainable={trainable}")
+        expect = "~0.1" if use_init else "N/A (no init)"
+        print(f"  {vtype:14s} var_init={use_init!s:5s}  mean(variance)={mean_var:.4f}  (expect {expect})  trainable={trainable}")
+
+    # 2) Check that variance updates over training (var head receives gradients)
+    n_steps = 100
+    print(f"\n--- Variance updates over training ({n_steps} steps) ---")
+    for vtype in ("linear", "mlp", "separate_agg"):
+        opt = {**default_opt, "var_head_type": vtype, "var_init": True}
+        model = Uncertainty(opt)
+        if hasattr(model, "freeze_base"):
+            model.freeze_base()  # train only var head
+        optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=1e-3)
+        criterion = nn.GaussianNLLLoss()
+        x_b = torch.randn(4, 3, 224, 224)
+        model.train()
+        with torch.no_grad():
+            var0 = model(x_b)[1]
+        mean_before = var0.mean().item()
+        mean_at_20 = None
+        for step in range(n_steps):
+            optimizer.zero_grad()
+            mu, var = model(x_b)
+            scale = math.sqrt(mu.shape[1])
+            target = mu.detach() + 0.1 * torch.randn_like(mu)
+            loss = criterion(mu * scale, target * scale, var)
+            loss.backward()
+            optimizer.step()
+            if step == 19:
+                with torch.no_grad():
+                    mean_at_20 = model(x_b)[1].mean().item()
+        with torch.no_grad():
+            mean_after = model(x_b)[1].mean().item()
+        changed = abs(mean_after - mean_before) > 0.001
+        print(f"  {vtype:14s}  before={mean_before:.4f}  after 20={mean_at_20:.4f}  after {n_steps}={mean_after:.4f}  updated={changed}")
+    print("Done.")

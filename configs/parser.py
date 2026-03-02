@@ -105,8 +105,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--variance_activation", type=str, default=None, choices=["softplus", "sigmoid"],
                    help="Activation for variance head output: softplus (positive, unbounded) or sigmoid (bounded [0,1])")
     p.add_argument("--freeze_model", action="store_true", help="Freeze backbone/aggregation, train only the uncertainty head")
-    p.add_argument("--normalize_variance", type=str, default=None, choices=["minmax", "zscore"],
-                   help="Normalize query variances before ECE: 'minmax' scales to [0,1], 'zscore' standardizes to mean=0/std=1")
     p.add_argument("--ece_metrics", type=str, default="recall,map,ap",
                    help="ECE metrics to compute: comma-separated, e.g. 'recall,map' or 'recall,map,ap'")
 

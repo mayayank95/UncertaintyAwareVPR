@@ -57,7 +57,7 @@ def _cal_recall(predictions: np.ndarray, positives_per_query: List, n_values: Li
         return recalls
     for q_idx in range(num_queries):
         for i, n in enumerate(n_values):
-            if np.sum(np.in1d(predictions[q_idx, :n], positives_per_query[q_idx])) > 0:
+            if np.sum(np.isin(predictions[q_idx, :n], positives_per_query[q_idx])) > 0:
                 recalls[i:] += 1
                 break
     return recalls / num_queries * 100.0
@@ -91,12 +91,12 @@ def _bin_pr(predictions: np.ndarray, distances: np.ndarray, positives_per_query:
         tp = fp = fn = tn = 0
         for q in range(distances.shape[0]):
             if distances[q, 0] < th:
-                if np.any(np.in1d(predictions[q, 0], positives_per_query[q])):
+                if np.any(np.isin(predictions[q, 0], positives_per_query[q])):
                     tp += 1
                 else:
                     fp += 1
             else:
-                if np.any(np.in1d(predictions[q, 0], positives_per_query[q])):
+                if np.any(np.isin(predictions[q, 0], positives_per_query[q])):
                     fn += 1
                 else:
                     tn += 1
@@ -224,6 +224,9 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
         fig, axs = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows), squeeze=False)
 
         x = np.arange(num_bins)
+        # Perfect calibration: metric 100% at lowest uncertainty (bin 0), 0% at highest (last bin)
+        perfect_x = np.array([0, num_bins - 1])
+        perfect_y = np.array([100.0, 0.0])
         idx = 0
 
         # Bin distribution
@@ -236,26 +239,29 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
         # Recall per bin
         if "recall" in metrics:
             ax = axs[idx // n_cols, idx % n_cols]
+            ax.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             for i, n in enumerate(n_values):
                 ax.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
             ax.set_xlabel("σ² (uncertainty: low → high)")
-            ax.set_ylabel("Recall@N")
+            ax.set_ylabel("Recall@N (%)")
             ax.legend()
             idx += 1
 
         # mAP per bin
         if "map" in metrics:
             ax = axs[idx // n_cols, idx % n_cols]
+            ax.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             for i, n in enumerate(n_values):
                 ax.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
             ax.set_xlabel("σ² (uncertainty: low → high)")
-            ax.set_ylabel("mAP@N")
+            ax.set_ylabel("mAP@N (%)")
             ax.legend()
             idx += 1
 
-        # AP per bin (when included)
+        # AP per bin (when included) — AP is in [0, 1]
         if "ap" in metrics and bin_ap is not None:
             ax = axs[idx // n_cols, idx % n_cols]
+            ax.plot(perfect_x, np.array([1.0, 0.0]), "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             ax.plot(x, bin_ap, marker="o", label="AP")
             ax.set_xlabel("σ² (uncertainty: low → high)")
             ax.set_ylabel("AP")

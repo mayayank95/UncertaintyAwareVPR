@@ -84,3 +84,14 @@ def log_wandb_images(images: Dict[str, Path], step: Optional[int] = None) -> Non
             to_log[key] = wandb.Image(str(p))
     if to_log:
         wandb.log(to_log, step=step)
+
+
+def save_wandb_logs(log_dir: Optional[str]) -> None:
+    """Upload debug.log and info.log from log_dir to the current W&B run. Call before wandb.finish()."""
+    if wandb.run is None or not log_dir:
+        return
+    log_path = Path(log_dir)
+    for name in ("debug.log", "info.log"):
+        p = log_path / name
+        if p.exists():
+            wandb.save(str(p), base_path=str(log_path), policy="end")

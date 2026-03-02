@@ -45,11 +45,11 @@ def setup_cudnn(benchmark: bool = False):
         # If speed is requested:
         torch.backends.cudnn.benchmark = True 
         torch.backends.cudnn.deterministic = False
-        logging.info("cuDNN benchmark ENABLED: Training will be FASTER but not bit-by-bit reproducible.")
+        logging.debug("cuDNN benchmark ENABLED: Training will be FASTER but not bit-by-bit reproducible.")
     else:
         # If reproducibility is requested (already set to False by make_deterministic):
         # This ensures exact results if the same seed is used
-        logging.info("cuDNN benchmark DISABLED: Training will be bit-by-bit DETERMINISTIC (Slower).")
+        logging.debug("cuDNN benchmark DISABLED: Training will be bit-by-bit DETERMINISTIC (Slower).")
 
 
 def copy_resume_model_to_log_dir(cfg, logger: logging.Logger):

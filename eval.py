@@ -7,19 +7,20 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
-from configs.runtime import build_config_and_datasets, init_model, init_wandb, log_wandb, log_wandb_images
+from configs.runtime import build_config_and_datasets, init_model, init_wandb, log_wandb_images
 from data.test_dataset import TestDataset
 from eval_metrics import visualizations
 from eval_metrics.eval_ece_sh import compute_ece
-from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics, normalize_variance
-from utils import commons
+from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
+from utils import commons, wandb_utils
 
 logger = logging.getLogger(__name__)
 
-def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None):
+def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None, log_dataset_info=True):
     """
     Evaluates the model on a single dataset.
     Extracts features once, then computes Recalls and Uncertainty metrics.
+    log_dataset_info: if True, log dataset size (e.g. "Testing on ..."); set False when called every epoch from train.
     """
     model = model.eval()
     dataset_output_dir = Path(args['log_dir']) / dataset_name
@@ -34,7 +35,8 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         use_labels=args['use_labels'],
         resize_test_imgs=args.get('resize_test_imgs', False),
     )
-    logger.info(f"{'='*30}\nTesting on {test_ds}")
+    if log_dataset_info:
+        logger.info(f"{'='*30}\nTesting on {test_ds}")
 
     # --- 1. Combined Descriptor & Variance Extraction ---
     # We store both to avoid re-running the model for uncertainty calculations
@@ -110,10 +112,16 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
     # --- 3. Uncertainty Metrics ---
     uncertainty_corr = None
     mean_query_variance = None
+    min_query_variance = None
+    max_query_variance = None
     ece_result = None
     if args['model_mode'] == "uncertainty":
         q_var = all_variances[test_ds.num_database:]
-        mean_query_variance = float(np.mean(q_var)) if len(q_var) > 0 else None
+        if len(q_var) > 0:
+            mean_per_q = np.mean(q_var, axis=1)
+            mean_query_variance = float(np.mean(mean_per_q))
+            min_query_variance = float(np.min(mean_per_q))
+            max_query_variance = float(np.max(mean_per_q))
         uncertainty_corr = compute_uncertainty_correlation(
             args, all_descriptors, all_variances, positives_per_query, test_ds.num_database
         )
@@ -121,8 +129,6 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             q_variances = all_variances[test_ds.num_database:]
             if args['dry_run']:
                 q_variances = q_variances[:1]
-            if args.get('normalize_variance'):
-                q_variances = normalize_variance(q_variances, args['normalize_variance'])
             ece_metrics = args.get('ece_metrics') or ['recall', 'map']
             ece_result = compute_ece(
                 predictions, positives_per_query, q_variances,
@@ -144,7 +150,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             distances=pred_distances, query_variances=query_variances,
         )
 
-    if save_plots:
+    if args['use_labels']:
         logger.info(f"Results for {dataset_name}: {recalls_str}")
     if args['model_mode'] == "uncertainty" and save_plots:
         if uncertainty_corr is not None:
@@ -167,17 +173,23 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         if "ece_ap" in ece_result:
             wandb_metrics["ece/ap"] = float(ece_result["ece_ap"])
 
-    # Log plot images to W&B when saved to disk (images use separate wandb.log, OK at same step)
+    # Build image dict for W&B when plots are saved (caller logs with scalars to avoid step reordering)
+    wandb_images = None
     if args.get("use_wandb") and save_plots and dataset_output_dir.exists():
-        log_wandb_images(
-            {
-                f"eval/{dataset_name}/variance_distribution": dataset_output_dir / "variance_distribution.png",
-                f"eval/{dataset_name}/ece_plot": dataset_output_dir / "ece_plot.png",
-            },
-            step=wandb_step,
-        )
+        images_to_log = {
+            f"eval/{dataset_name}/variance_distribution": dataset_output_dir / "variance_distribution.png",
+            f"eval/{dataset_name}/ece_plot": dataset_output_dir / "ece_plot.png",
+        }
+        preds_dir = dataset_output_dir / "preds"
+        if preds_dir.exists():
+            for p in sorted(preds_dir.glob("*.jpg")):
+                images_to_log[f"eval/{dataset_name}/preds/{p.stem}"] = p
+        if wandb_step is None:
+            log_wandb_images(images_to_log, step=None)
+        else:
+            wandb_images = images_to_log
 
-    return recalls, recalls_str, uncertainty_corr, mean_query_variance, wandb_metrics
+    return recalls, recalls_str, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images
 
 if __name__ == "__main__":
     # ---- Load config and datasets (shared helper) ----
@@ -193,22 +205,13 @@ if __name__ == "__main__":
         name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
 
-        recalls, r_str, corr, mean_var, eval_wb = eval_dataset(
+        recalls, r_str, corr, mean_var, min_var, max_var, eval_wb, _ = eval_dataset(
             cfg, model, device, name, datasets_paths[name]["test"], wandb_step=None
         )
 
-        # Log all metrics to W&B in a single call
-        if cfg.get("use_wandb"):
-            all_metrics = {f"eval/{name}/recall@{k}": float(v) for k, v in zip(cfg.get("recall_values", [1, 5, 10, 20]), recalls)}
-            if corr is not None:
-                all_metrics[f"eval/{name}/uncertainty_correlation"] = float(corr)
-            if mean_var is not None:
-                all_metrics[f"eval/{name}/mean_variance"] = float(mean_var)
-            all_metrics.update(eval_wb)
-            log_wandb(all_metrics)
+        wandb_utils.log_eval_dataset(
+            cfg, name, recalls, corr, mean_var, min_var, max_var, eval_wb
+        )
 
     logger.info("=" * 30 + "\nAll processes finished.")
-
-    if cfg.get("use_wandb"):
-        import wandb
-        wandb.finish()
+    wandb_utils.finish_run(cfg)
