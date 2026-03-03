@@ -1,5 +1,4 @@
 import logging
-import math
 import multiprocessing
 from datetime import datetime
 
@@ -13,7 +12,7 @@ from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
 from eval import eval_dataset
 from losses import cosface_loss
-from losses.gaussian_cosine_loss import GaussianCosineLoss
+from losses import uncertainty_utils
 from utils import augmentations, commons, util, wandb_utils
 
 logger = logging.getLogger(__name__)
@@ -48,15 +47,15 @@ def train(args, model, device, dataset_name, datasets_dir):
         ce_criterion = torch.nn.CrossEntropyLoss()
     
     if "uncertainty" in active_losses and args['model_mode'] == "uncertainty":
-        uncertainty_loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
-        if uncertainty_loss_type == 'gaussian_cosine':
-            uncertainty_criterion = GaussianCosineLoss()
-        else:  # default to gaussian_nll
-            uncertainty_criterion = torch.nn.GaussianNLLLoss()
         uncertainty_lambda = args.get('uncertainty_lambda', 1.0)
-        logger.info(f"Using uncertainty loss: {uncertainty_loss_type}")
+        logger.info(f"Using uncertainty loss: {args.get('uncertainty_loss', 'gaussian_nll')}")
         logger.info(f"Variance head type: {args.get('var_head_type', 'linear')}")
     model_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args['lr'])
+    if args.get("freeze_model"):
+        trainable_params = [p for p in model.parameters() if p.requires_grad]
+        n_trainable = sum(p.numel() for p in trainable_params)
+        trainable_names = [n for n, p in model.named_parameters() if p.requires_grad]
+        logger.info(f"freeze_model: optimizing only head (var_head + final_l2): {len(trainable_params)} param groups, {n_trainable} params — {trainable_names}")
 
     train_set_folder = f"{datasets_dir[dataset_name]['train']}"
     val_set_folder = f"{datasets_dir[dataset_name]['validation']}"
@@ -170,21 +169,14 @@ def train(args, model, device, dataset_name, datasets_dir):
                 # Normalize class weights to get the ground-truth "prototype" for each class
                 weights = classifiers[current_group_num].weight
                 norm_weights = torch.nn.functional.normalize(weights, p=2, dim=1)
-                # Select the specific target vector for each image in the batch
                 target_vectors = norm_weights[targets]
-                    
-                # For GaussianNLLLoss: scale L2-normalized embeddings by √D so per-element
-                # squared differences are O(1), matching the Softplus variance range.
-                # GaussianCosineLoss uses cosine distance directly and needs no scaling.
-                if isinstance(uncertainty_criterion, torch.nn.GaussianNLLLoss):
-                    scale = math.sqrt(mu_norm.shape[1])
-                    loss_uncertainty = uncertainty_criterion(mu_norm * scale, target_vectors * scale, variance)
-                else:
-                    loss_uncertainty = uncertainty_criterion(mu_norm, target_vectors, variance)
-                
-                # Sum of classification loss and uncertainty estimation loss
-                loss = loss + uncertainty_lambda * loss_uncertainty
-                epoch_losses_gnll.append((uncertainty_lambda * loss_uncertainty).item())
+                loss_uncertainty = uncertainty_utils.compute_uncertainty_loss(
+                    mu_norm, target_vectors, variance,
+                    loss_type=args.get('uncertainty_loss', 'gaussian_nll'),
+                    lambda_=uncertainty_lambda,
+                )
+                loss = loss + loss_uncertainty
+                epoch_losses_gnll.append(loss_uncertainty.item())
             
             if args['model_mode'] == "uncertainty":
                 epoch_variances.append(variance.mean().item())
