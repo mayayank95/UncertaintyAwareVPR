@@ -108,13 +108,14 @@ class Uncertainty(GeoLocalizationNet):
         self.final_l2 = L2Norm()
 
     def forward(self, inputs):
+        # No torch.no_grad(): variance path must retain grad for uncertainty loss backward.
         x = self.backbone(inputs)
 
         # Mean path
         desc = self.aggregation(x)
         mu = self.final_l2(desc)
 
-        # Variance path
+        # Variance path (gradients flow through var_head when loss.backward() is called)
         if self._var_from_feature_map:
             variance = self.var_head(x)
         else:

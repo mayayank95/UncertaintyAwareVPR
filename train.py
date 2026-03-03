@@ -50,12 +50,15 @@ def train(args, model, device, dataset_name, datasets_dir):
         uncertainty_lambda = args.get('uncertainty_lambda', 1.0)
         logger.info(f"Using uncertainty loss: {args.get('uncertainty_loss', 'gaussian_nll')}")
         logger.info(f"Variance head type: {args.get('var_head_type', 'linear')}")
-    model_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args['lr'])
+
+    # LR for model: when freeze_model use head_lr (default 1e-3) so uncertainty head can learn; else use --lr
+    model_lr = (args.get("head_lr") if args.get("head_lr") is not None else 1e-3) if args.get("freeze_model") else args["lr"]
+    model_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=model_lr)
+    opt_param_names = [n for n, p in model.named_parameters() if p.requires_grad]
+    logger.info(f"Optimizer (model): lr={model_lr}, params ({len(opt_param_names)}): {opt_param_names}")
     if args.get("freeze_model"):
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
-        n_trainable = sum(p.numel() for p in trainable_params)
-        trainable_names = [n for n, p in model.named_parameters() if p.requires_grad]
-        logger.info(f"freeze_model: optimizing only head (var_head + final_l2): {len(trainable_params)} param groups, {n_trainable} params — {trainable_names}")
+        n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"freeze_model: training {n_trainable} params (backbone/aggregation frozen)")
 
     train_set_folder = f"{datasets_dir[dataset_name]['train']}"
     val_set_folder = f"{datasets_dir[dataset_name]['validation']}"
@@ -103,14 +106,18 @@ def train(args, model, device, dataset_name, datasets_dir):
     else:
         best_val_recall1 = start_epoch_num = 0
 
+    early_stop_metric = args.get("early_stop_metric", "recall")
+    best_val_gnll = float("inf")
     if args.get('resume_train') or args.get('resume_model'):
         logger.info("Verifying resumed model performance (before any training)...")
-        init_recalls, _, init_corr, init_mean_var, init_min_var, init_max_var, _, _ = eval_dataset(
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_min_var, init_max_var, _, _, init_val_gnll = eval_dataset(
             args, model, device, dataset_name, val_set_folder, log_dataset_info=False
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
         _xv = f"{init_max_var:.4f}" if init_max_var is not None else "N/A"
-        logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}, mean_var={_mv}, max_var={_xv}")
+        _gnll = f", val_gnll={init_val_gnll:.4f}" if init_val_gnll is not None else ""
+        _map = f", mAP@1={init_map_at_k[0]:.2f}" if init_map_at_k is not None else ""
+        logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}{_map}, mean_var={_mv}, max_var={_xv}{_gnll}")
 
     # ---- Training loop ----
     logger.info("Start training ...")
@@ -183,6 +190,14 @@ def train(args, model, device, dataset_name, datasets_dir):
                 
             # ---- Backward ----
             loss.backward()
+            if args.get("debug_var_head_grad") and args.get("model_mode") == "uncertainty" and iteration == 0:
+                root = getattr(model, "module", model)
+                if hasattr(root, "var_head"):
+                    norms = []
+                    for n, p in root.var_head.named_parameters():
+                        g = p.grad.norm().item() if p.grad is not None else 0.0
+                        norms.append(f"{n}={g:.6f}")
+                    logger.info(f"[debug_var_head_grad] epoch {epoch_num} first batch var_head grad norms: {norms}")
             model_optimizer.step()
             if classifiers_optimizers[current_group_num] is not None:
                 classifiers_optimizers[current_group_num].step()
@@ -218,14 +233,18 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, _, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images = eval_dataset(
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_gnll = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False
         )
-        is_best = recalls[0] > best_val_recall1
-        best_val_recall1 = max(recalls[0], best_val_recall1)
+        if early_stop_metric == "val_gnll" and val_gnll is not None:
+            is_best = val_gnll < best_val_gnll
+            best_val_gnll = min(val_gnll, best_val_gnll)
+        else:
+            is_best = recalls[0] > best_val_recall1
+            best_val_recall1 = max(recalls[0], best_val_recall1)
 
         wandb_utils.log_train_epoch(
-            args, epoch_num, recalls, best_val_recall1, active_losses,
+            args, epoch_num, recalls, map_at_k, best_val_recall1, active_losses,
             epoch_variances, epoch_losses, epoch_losses_ce, epoch_losses_gnll,
             uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance,
             eval_wandb_metrics, eval_wandb_images,
@@ -236,7 +255,7 @@ def train(args, model, device, dataset_name, datasets_dir):
         else:
             not_improved_count += 1
             if not_improved_count >= patience:
-                logger.info(f"Early stopping triggered after {patience} epochs without improvement.")
+                logger.info(f"Early stopping triggered after {patience} epochs without improvement (metric: {early_stop_metric}).")
                 break
 
         # Save checkpoint, which contains all training parameters

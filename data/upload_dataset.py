@@ -2,7 +2,7 @@
 from pathlib import Path
 import zipfile
 import logging
-from typing import Dict
+from typing import Dict, List
 
 # Create a logger for this module
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ def _ensure_dir(dst):
     if not dst.exists():
         dst.mkdir(parents=True, exist_ok=True)
 
-def unzip_folder(src: Path, dst: Path, data_type: list[str]):
+def unzip_folder(src: Path, dst: Path, data_type: List[str]):
     for zip_path in src.glob("*.zip"):
         if zip_path.stem.lower() not in data_type and data_type != "all":
             logger.debug(f"Skipping {zip_path.name} as it is not in the specified datasets_type.")

@@ -4,17 +4,42 @@ from pathlib import Path
 import faiss
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from configs.runtime import build_config_and_datasets, init_model, init_wandb, log_wandb_images
 from data.test_dataset import TestDataset
 from eval_metrics import visualizations
-from eval_metrics.eval_ece_sh import compute_ece
+from eval_metrics.eval_ece_sh import compute_ece, _cal_mapk
 from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
+from losses import uncertainty_utils
 from utils import commons, wandb_utils
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_val_gnll(args, all_descriptors, all_variances, positives_per_query, num_database):
+    """Validation uncertainty (GNLL) loss: same formula as train (query vs first positive). Returns float or None."""
+    if positives_per_query is None:
+        return None
+    valid = [(i, pos[0]) for i, pos in enumerate(positives_per_query) if len(pos) > 0]
+    if len(valid) == 0:
+        return None
+    q_idx = np.array([num_database + i for i, _ in valid])
+    db_idx = np.array([idx for _, idx in valid])
+    q = torch.from_numpy(all_descriptors[q_idx])
+    db = torch.from_numpy(all_descriptors[db_idx])
+    qv = torch.from_numpy(all_variances[q_idx])
+    q_norm = F.normalize(q, p=2, dim=1)
+    db_norm = F.normalize(db, p=2, dim=1)
+    loss = uncertainty_utils.compute_uncertainty_loss(
+        q_norm, db_norm, qv,
+        loss_type=args.get("uncertainty_loss", "gaussian_nll"),
+        lambda_=args.get("uncertainty_lambda", 1.0),
+    )
+    return loss.item()
+
 
 def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None, log_dataset_info=True):
     """
@@ -96,6 +121,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
     recalls = np.zeros(len(args['recall_values']))
     positives_per_query = None
 
+    map_at_k = None
     if args['use_labels']:
         positives_per_query = test_ds.get_positives()
         for query_idx, preds in enumerate(predictions):
@@ -105,9 +131,15 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
                     break
         recalls = recalls / test_ds.num_queries * 100
         recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(args['recall_values'], recalls)])
+        map_at_k = [_cal_mapk(predictions, positives_per_query, n) for n in args['recall_values']]
         
         if not args['dry_run'] and args['datasets_type'] == ['test']:
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
+
+    # Validation uncertainty loss (for early stopping when backbone frozen)
+    val_gnll = None
+    if args.get("model_mode") == "uncertainty" and args.get("use_labels") and positives_per_query is not None:
+        val_gnll = _compute_val_gnll(args, all_descriptors, all_variances, positives_per_query, test_ds.num_database)
 
     # --- 3. Uncertainty Metrics ---
     uncertainty_corr = None
@@ -151,7 +183,15 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         )
 
     if args['use_labels']:
-        logger.info(f"Results for {dataset_name}: {recalls_str}")
+        msg = f"Results for {dataset_name}: {recalls_str}"
+        if map_at_k is not None:
+            msg += " | " + ", ".join([f"mAP@{val}: {m:.2f}" for val, m in zip(args['recall_values'], map_at_k)])
+        if val_gnll is not None:
+            msg += f", val_gnll = {val_gnll:.4f}"
+        logger.info(msg)
+        if recalls[0] == 0 and map_at_k is not None and map_at_k[0] == 0:
+            logger.info("R@1 and mAP@1 are 0 when no query has a positive at rank 1 (e.g. dry run with random descriptors, or frozen backbone with poor retrieval).")
+        # With frozen backbone, R@k and mAP@k above are constant across epochs (same descriptors). Only ECE (bin-based) changes as variance changes.
     if args['model_mode'] == "uncertainty" and save_plots:
         if uncertainty_corr is not None:
             logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")
@@ -161,8 +201,10 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             num_database=test_ds.num_database,
         )
 
-    # Collect all W&B metrics for the caller to log in a single call
+    # Collect all W&B metrics for the caller to log in a single call (val/map@k added by caller via wandb_utils)
     wandb_metrics = {}
+    if val_gnll is not None:
+        wandb_metrics["val/gnll"] = float(val_gnll)
     if ece_result:
         if "ece_recall" in ece_result:
             for n, v in ece_result["ece_recall"].items():
@@ -189,7 +231,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         else:
             wandb_images = images_to_log
 
-    return recalls, recalls_str, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images
+    return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images, val_gnll
 
 if __name__ == "__main__":
     # ---- Load config and datasets (shared helper) ----
@@ -205,12 +247,12 @@ if __name__ == "__main__":
         name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
 
-        recalls, r_str, corr, mean_var, min_var, max_var, eval_wb, _ = eval_dataset(
+        recalls, r_str, map_at_k, corr, mean_var, min_var, max_var, eval_wb, _, _ = eval_dataset(
             cfg, model, device, name, datasets_paths[name]["test"], wandb_step=None
         )
 
         wandb_utils.log_eval_dataset(
-            cfg, name, recalls, corr, mean_var, min_var, max_var, eval_wb
+            cfg, name, recalls, map_at_k, corr, mean_var, min_var, max_var, eval_wb
         )
 
     logger.info("=" * 30 + "\nAll processes finished.")

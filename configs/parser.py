@@ -105,6 +105,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--variance_activation", type=str, default=None, choices=["softplus", "sigmoid"],
                    help="Activation for variance head output: softplus (positive, unbounded) or sigmoid (bounded [0,1])")
     p.add_argument("--freeze_model", action="store_true", help="Freeze backbone/aggregation, train only the uncertainty head")
+    p.add_argument("--head_lr", type=float, default=None,
+                   help="LR for head (var_head + final_l2) when freeze_model. Default: 1e-3 when freeze_model, else same as --lr")
+    p.add_argument("--early_stop_metric", type=str, default="recall", choices=["recall", "val_gnll"],
+                   help="Metric for early stopping: recall (maximize R@1) or val_gnll (minimize validation uncertainty loss)")
+    p.add_argument("--debug_var_head_grad", action="store_true",
+                   help="Log var_head gradient norms after backward (one line per epoch) to verify gradients flow")
     p.add_argument("--ece_metrics", type=str, default="recall,map,ap",
                    help="ECE metrics to compute: comma-separated, e.g. 'recall,map' or 'recall,map,ap'")
 

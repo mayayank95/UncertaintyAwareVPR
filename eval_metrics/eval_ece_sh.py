@@ -179,14 +179,14 @@ def compute_ece(
             bin_ap[b] = ap
             ece_ap += bin_weights[b] * abs(ap - expected)
 
-    # Log results
+    # Log results (ECE = calibration error; lower is better. Bins change with variance, so ECE can go up/down even when overall R@k/mAP@k are constant.)
     n_str = "/".join([str(n) for n in n_values])
     if "recall" in metrics:
         ece_rec_str = "/".join([f"{e:.3f}" for e in ece_recall])
-        logger.info(f"ECE_R@{n_str}: {ece_rec_str}  (zoom_k={zoom_k})")
+        logger.info(f"ECE_R@{n_str}: {ece_rec_str}  (zoom_k={zoom_k})  [calibration error]")
     if "map" in metrics:
         ece_map_str = "/".join([f"{e:.3f}" for e in ece_map])
-        logger.info(f"ECE_mAP@{n_str}: {ece_map_str}")
+        logger.info(f"ECE_mAP@{n_str}: {ece_map_str}  [calibration error]")
     if "ap" in metrics and ece_ap is not None:
         logger.info(f"ECE_AP: {ece_ap:.3f}")
 

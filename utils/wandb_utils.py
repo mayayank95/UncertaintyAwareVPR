@@ -19,6 +19,20 @@ def _add_recall_metrics(
             metrics[f"{prefix}recall@{k}"] = float(recalls[i])
 
 
+def _add_map_metrics(
+    metrics: Dict[str, Any],
+    prefix: str,
+    map_at_k: Optional[List[float]],
+    recall_values: List[int],
+) -> None:
+    """Add mAP@k metrics to metrics dict. prefix e.g. 'val/' or 'eval/sf_xl/'."""
+    if map_at_k is None:
+        return
+    for i, k in enumerate(recall_values):
+        if i < len(map_at_k):
+            metrics[f"{prefix}map@{k}"] = float(map_at_k[i])
+
+
 def _add_uncertainty_metrics(
     metrics: Dict[str, Any],
     prefix: str,
@@ -54,6 +68,7 @@ def log_train_epoch(
     cfg: Dict[str, Any],
     epoch_num: int,
     recalls: np.ndarray,
+    map_at_k: Optional[List[float]],
     best_val_recall1: float,
     active_losses: List[str],
     epoch_variances: Optional[List[float]],
@@ -73,6 +88,7 @@ def log_train_epoch(
     rv = _recall_values(cfg)
     metrics: Dict[str, Any] = {"epoch": epoch_num, "val/best_recall@1": float(best_val_recall1)}
     _add_recall_metrics(metrics, "val/", recalls, rv)
+    _add_map_metrics(metrics, "val/", map_at_k, rv)
     if "uncertainty" in active_losses and epoch_variances:
         metrics["train/mean_variance"] = float(np.mean(epoch_variances))
         metrics["train/std_variance"] = float(np.std(epoch_variances))
@@ -97,6 +113,7 @@ def log_eval_dataset(
     cfg: Dict[str, Any],
     dataset_name: str,
     recalls: np.ndarray,
+    map_at_k: Optional[List[float]],
     uncertainty_corr: Optional[float],
     mean_variance: Optional[float],
     min_variance: Optional[float],
@@ -110,6 +127,7 @@ def log_eval_dataset(
     rv = _recall_values(cfg)
     metrics: Dict[str, Any] = {}
     _add_recall_metrics(metrics, prefix, recalls, rv)
+    _add_map_metrics(metrics, prefix, map_at_k, rv)
     _add_uncertainty_metrics(
         metrics, prefix,
         uncertainty_corr, mean_variance, min_variance, max_variance,
