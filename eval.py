@@ -201,35 +201,32 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             num_database=test_ds.num_database,
         )
 
-    # Collect all W&B metrics for the caller to log in a single call (val/map@k added by caller via wandb_utils)
+    # Collect all W&B metrics for the caller to log (all under eval/{dataset_name}/ for grouping)
+    prefix = f"eval/{dataset_name}/"
     wandb_metrics = {}
     if val_gnll is not None:
-        wandb_metrics["val/gnll"] = float(val_gnll)
+        wandb_metrics[f"{prefix}val_gnll"] = float(val_gnll)
     if ece_result:
         if "ece_recall" in ece_result:
             for n, v in ece_result["ece_recall"].items():
-                wandb_metrics[f"ece/recall@{n}"] = float(v)
+                wandb_metrics[f"{prefix}ece_recall@{n}"] = float(v)
         if "ece_map" in ece_result:
             for n, v in ece_result["ece_map"].items():
-                wandb_metrics[f"ece/map@{n}"] = float(v)
+                wandb_metrics[f"{prefix}ece_map@{n}"] = float(v)
         if "ece_ap" in ece_result:
-            wandb_metrics["ece/ap"] = float(ece_result["ece_ap"])
+            wandb_metrics[f"{prefix}ece_ap"] = float(ece_result["ece_ap"])
 
-    # Build image dict for W&B when plots are saved (caller logs with scalars to avoid step reordering)
+    # Build image dict for W&B when plots are saved (caller merges and logs; no step for eval-only)
     wandb_images = None
     if args.get("use_wandb") and save_plots and dataset_output_dir.exists():
-        images_to_log = {
-            f"eval/{dataset_name}/variance_distribution": dataset_output_dir / "variance_distribution.png",
-            f"eval/{dataset_name}/ece_plot": dataset_output_dir / "ece_plot.png",
+        wandb_images = {
+            f"{prefix}variance_distribution": dataset_output_dir / "variance_distribution.png",
+            f"{prefix}ece_plot": dataset_output_dir / "ece_plot.png",
         }
         preds_dir = dataset_output_dir / "preds"
         if preds_dir.exists():
             for p in sorted(preds_dir.glob("*.jpg")):
-                images_to_log[f"eval/{dataset_name}/preds/{p.stem}"] = p
-        if wandb_step is None:
-            log_wandb_images(images_to_log, step=None)
-        else:
-            wandb_images = images_to_log
+                wandb_images[f"{prefix}preds/{p.stem}"] = p
 
     return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images, val_gnll
 
@@ -247,12 +244,12 @@ if __name__ == "__main__":
         name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
 
-        recalls, r_str, map_at_k, corr, mean_var, min_var, max_var, eval_wb, _, _ = eval_dataset(
+        recalls, r_str, map_at_k, corr, mean_var, min_var, max_var, eval_wb, wandb_images, _ = eval_dataset(
             cfg, model, device, name, datasets_paths[name]["test"], wandb_step=None
         )
 
         wandb_utils.log_eval_dataset(
-            cfg, name, recalls, map_at_k, corr, mean_var, min_var, max_var, eval_wb
+            cfg, name, recalls, map_at_k, corr, mean_var, min_var, max_var, eval_wb, wandb_images
         )
 
     logger.info("=" * 30 + "\nAll processes finished.")

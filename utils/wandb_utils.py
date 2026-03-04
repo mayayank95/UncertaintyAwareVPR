@@ -119,8 +119,10 @@ def log_eval_dataset(
     min_variance: Optional[float],
     max_variance: Optional[float],
     eval_wandb_metrics: Dict[str, Any],
+    eval_wandb_images: Optional[Dict[str, Path]] = None,
 ) -> None:
-    """Log evaluation metrics for one dataset to W&B. No-op if use_wandb is False."""
+    """Log evaluation metrics and images for one dataset to W&B. No-op if use_wandb is False.
+    Eval-only: no step; just scalars + ECE/variance plots + prediction images under eval/{dataset_name}/."""
     if not cfg.get("use_wandb"):
         return
     prefix = f"eval/{dataset_name}/"
@@ -133,6 +135,7 @@ def log_eval_dataset(
         uncertainty_corr, mean_variance, min_variance, max_variance,
     )
     metrics.update(eval_wandb_metrics)
+    _merge_images_into_metrics(metrics, eval_wandb_images)
     log_wandb(metrics)
 
 
