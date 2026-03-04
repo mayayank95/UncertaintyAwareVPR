@@ -1,8 +1,8 @@
 {
-  "data_folder": "/home/maya/Desktop/yoli/datasets/",
+  "data_folder": "./datasets/",
   "local_data_folder": "datasets",
   "logs_folder": "logs/CosPlace",
-  "datasets": "sf_xl,Pitts30K,amstertime,nordland,msls-val",
+  "datasets": "sf_xl",
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" },
     { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" },
@@ -17,5 +17,9 @@
   "positive_dist_threshold": 25,
   "batch_size": 32,
   "image_size": 512,
-  "uncertainty_loss": "gaussian_nll"
+  "uncertainty_loss": "gaussian_nll",
+  "groups_num": 1,
+  "datasets_type": "train,val",
+  "variance_activation": "softplus"
+
 }
