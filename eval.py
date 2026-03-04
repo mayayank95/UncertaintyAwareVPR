@@ -201,20 +201,30 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             num_database=test_ds.num_database,
         )
 
-    # Collect all W&B metrics for the caller to log (all under eval/{dataset_name}/ for grouping)
+    # Collect all W&B metrics for the caller to log.
+    # Prefixed keys (eval/{dataset_name}/...) for grouping per dataset in eval runs.
+    # Flat keys (val/gnll, ece/recall@1, ...) when wandb_step is set so train.py time-series graphs get data.
     prefix = f"eval/{dataset_name}/"
     wandb_metrics = {}
     if val_gnll is not None:
         wandb_metrics[f"{prefix}val_gnll"] = float(val_gnll)
+        if wandb_step is not None:
+            wandb_metrics["val/gnll"] = float(val_gnll)
     if ece_result:
         if "ece_recall" in ece_result:
             for n, v in ece_result["ece_recall"].items():
                 wandb_metrics[f"{prefix}ece_recall@{n}"] = float(v)
+                if wandb_step is not None:
+                    wandb_metrics[f"ece/recall@{n}"] = float(v)
         if "ece_map" in ece_result:
             for n, v in ece_result["ece_map"].items():
                 wandb_metrics[f"{prefix}ece_map@{n}"] = float(v)
+                if wandb_step is not None:
+                    wandb_metrics[f"ece/map@{n}"] = float(v)
         if "ece_ap" in ece_result:
             wandb_metrics[f"{prefix}ece_ap"] = float(ece_result["ece_ap"])
+            if wandb_step is not None:
+                wandb_metrics["ece/ap"] = float(ece_result["ece_ap"])
 
     # Build image dict for W&B when plots are saved (caller merges and logs; no step for eval-only)
     wandb_images = None
