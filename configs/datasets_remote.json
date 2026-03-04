@@ -20,6 +20,6 @@
   "uncertainty_loss": "gaussian_nll",
   "groups_num": 1,
   "datasets_type": "train,val",
-  "variance_activation": "softplus"
-
+  "variance_activation": "softplus",
+  "patience": 5
 }

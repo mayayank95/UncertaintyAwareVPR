@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size", type=int, default=None, help="Batch size for training DataLoader")
     p.add_argument("--iterations_per_epoch", type=int, default=10000, help="Number of training iterations per epoch")
     p.add_argument("--epochs_num", type=int, default=50, help="Total number of training epochs")
-    p.add_argument("--patience", type=int, default=5, help="Patience for early stopping (epochs without improvement)")
+    p.add_argument("--patience", type=int, default=None, help="Patience for early stopping (epochs without improvement)")
     p.add_argument("--losses", type=str, default=None, help="Losses to use, comma-separated (e.g. 'ce', 'ce,uncertainty')")
 
     # Data augmentation
@@ -87,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha", type=int, default=30, help="Size of the margin in degrees")
     p.add_argument("--N", type=int, default=5, help="Min number of images per place")
     p.add_argument("--L", type=int, default=2, help="Smoothing for group boundaries")
-    p.add_argument("--groups_num", type=int, default=8, help="Number of groups for CosPlace training")
+    p.add_argument("--groups_num", type=int, default=None, help="Number of groups for CosPlace training")
     p.add_argument("--min_images_per_class", type=int, default=10, help="Minimum images per class for a group to be valid")
 
     # Uncertainty
