@@ -41,15 +41,19 @@ def _compute_val_gnll(args, all_descriptors, all_variances, positives_per_query,
     return loss.item()
 
 
-def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None, log_dataset_info=True):
+def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None, log_dataset_info=True,
+                 classifiers=None, current_group_num=None, groups=None):
     """
     Evaluates the model on a single dataset.
     Extracts features once, then computes Recalls and Uncertainty metrics.
     log_dataset_info: if True, log dataset size (e.g. "Testing on ..."); set False when called every epoch from train.
+    classifiers, current_group_num, groups: optional, passed from train for validation uncertainty loss (query vs classifier embedding).
     """
     model = model.eval()
-    dataset_output_dir = Path(args['log_dir']) / dataset_name
-    if not args['dry_run']:
+    # Use eval/<dataset_name> so we never conflict with a file named like the dataset (e.g. sf_xl)
+    dataset_output_dir = Path(args['log_dir']) / "eval" / dataset_name
+    # When using W&B, create directories even in dry_run mode so logging has a valid target.
+    if not args['dry_run'] or args.get("use_wandb"):
         dataset_output_dir.mkdir(parents=True, exist_ok=True)
 
     test_ds = TestDataset(
@@ -144,6 +148,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
     # --- 3. Uncertainty Metrics ---
     uncertainty_corr = None
     mean_query_variance = None
+    std_query_variance = None
     min_query_variance = None
     max_query_variance = None
     ece_result = None
@@ -152,20 +157,28 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         if len(q_var) > 0:
             mean_per_q = np.mean(q_var, axis=1)
             mean_query_variance = float(np.mean(mean_per_q))
+            std_query_variance = float(np.std(mean_per_q))
             min_query_variance = float(np.min(mean_per_q))
             max_query_variance = float(np.max(mean_per_q))
+        save_corr_plot = args.get('save_plots', False) or (wandb_step is not None and args.get('use_wandb'))
+        if save_corr_plot:
+            dataset_output_dir.mkdir(parents=True, exist_ok=True)
         uncertainty_corr = compute_uncertainty_correlation(
-            args, all_descriptors, all_variances, positives_per_query, test_ds.num_database
+            args, all_descriptors, all_variances, positives_per_query, test_ds.num_database,
+            output_dir=dataset_output_dir if save_corr_plot else None,
         )
         if args['use_labels'] and positives_per_query is not None:
             q_variances = all_variances[test_ds.num_database:]
             if args['dry_run']:
                 q_variances = q_variances[:1]
             ece_metrics = args.get('ece_metrics') or ['recall', 'map']
+            save_ece_plot = not args['dry_run'] or (wandb_step is not None and args.get("use_wandb"))
+            if save_ece_plot:
+                dataset_output_dir.mkdir(parents=True, exist_ok=True)
             ece_result = compute_ece(
                 predictions, positives_per_query, q_variances,
                 n_values=args['recall_values'],
-                output_dir=dataset_output_dir if not args['dry_run'] else None,
+                output_dir=dataset_output_dir if save_ece_plot else None,
                 metrics=ece_metrics,
                 distances=distances,
             )
@@ -192,53 +205,64 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         if recalls[0] == 0 and map_at_k is not None and map_at_k[0] == 0:
             logger.info("R@1 and mAP@1 are 0 when no query has a positive at rank 1 (e.g. dry run with random descriptors, or frozen backbone with poor retrieval).")
         # With frozen backbone, R@k and mAP@k above are constant across epochs (same descriptors). Only ECE (bin-based) changes as variance changes.
-    if args['model_mode'] == "uncertainty" and save_plots:
-        if uncertainty_corr is not None:
-            logger.info(f"Uncertainty Pearson Correlation: {uncertainty_corr:.4f}")
-        compute_uncertainty_statistics(
-            all_variances,
-            dataset_output_dir,
-            num_database=test_ds.num_database,
-        )
+    # Save variance distribution (for val section in W&B when training, or when save_plots)
+    save_var_plot = save_plots or (wandb_step is not None and args.get("use_wandb"))
+    if args['model_mode'] == "uncertainty" and save_var_plot:
+        if dataset_output_dir.exists() and not dataset_output_dir.is_dir():
+            logger.warning("Output path %s exists as a file; skipping variance distribution plot.", dataset_output_dir)
+        else:
+            dataset_output_dir.mkdir(parents=True, exist_ok=True)
+            if uncertainty_corr is not None and save_plots:
+                logger.info(f"Uncertainty Spearman Correlation: {uncertainty_corr:.4f}")
+            compute_uncertainty_statistics(
+                all_variances,
+                dataset_output_dir,
+                num_database=test_ds.num_database,
+            )
 
     # Collect all W&B metrics for the caller to log.
     # Prefixed keys (eval/{dataset_name}/...) for grouping per dataset in eval runs.
-    # Flat keys (val/gnll, ece/recall@1, ...) when wandb_step is set so train.py time-series graphs get data.
+    # Flat keys (val/loss_uncertainty, ece/recall_01, ...) when wandb_step is set so train.py time-series graphs get data.
     prefix = f"eval/{dataset_name}/"
     wandb_metrics = {}
     if val_gnll is not None:
-        wandb_metrics[f"{prefix}val_gnll"] = float(val_gnll)
+        wandb_metrics[f"{prefix}val_loss_uncertainty"] = float(val_gnll)
         if wandb_step is not None:
-            wandb_metrics["val/gnll"] = float(val_gnll)
+            wandb_metrics["val/loss_uncertainty"] = float(val_gnll)
     if ece_result:
         if "ece_recall" in ece_result:
             for n, v in ece_result["ece_recall"].items():
-                wandb_metrics[f"{prefix}ece_recall@{n}"] = float(v)
+                k = f"{n:02d}"  # recall_01, recall_05 so all ece recalls group together
+                wandb_metrics[f"{prefix}ece_recall_{k}"] = float(v)
                 if wandb_step is not None:
-                    wandb_metrics[f"ece/recall@{n}"] = float(v)
+                    wandb_metrics[f"ece/recall_{k}"] = float(v)
         if "ece_map" in ece_result:
             for n, v in ece_result["ece_map"].items():
-                wandb_metrics[f"{prefix}ece_map@{n}"] = float(v)
+                k = f"{n:02d}"
+                wandb_metrics[f"{prefix}ece_map_{k}"] = float(v)
                 if wandb_step is not None:
-                    wandb_metrics[f"ece/map@{n}"] = float(v)
+                    wandb_metrics[f"ece/map_{k}"] = float(v)
         if "ece_ap" in ece_result:
             wandb_metrics[f"{prefix}ece_ap"] = float(ece_result["ece_ap"])
             if wandb_step is not None:
                 wandb_metrics["ece/ap"] = float(ece_result["ece_ap"])
 
-    # Build image dict for W&B when plots are saved (caller merges and logs; no step for eval-only)
+    # Build image dict for W&B when plots exist (train: val/ece sections; eval: when save_plots)
     wandb_images = None
-    if args.get("use_wandb") and save_plots and dataset_output_dir.exists():
-        wandb_images = {
-            f"{prefix}variance_distribution": dataset_output_dir / "variance_distribution.png",
-            f"{prefix}ece_plot": dataset_output_dir / "ece_plot.png",
-        }
-        preds_dir = dataset_output_dir / "preds"
-        if preds_dir.exists():
-            for p in sorted(preds_dir.glob("*.jpg")):
-                wandb_images[f"{prefix}preds/{p.stem}"] = p
+    if args.get("use_wandb") and dataset_output_dir.exists():
+        include_images = save_plots or (wandb_step is not None)  # train: always; eval: when save_plots
+        if include_images:
+            wandb_images = {
+                f"{prefix}variance_distribution": (dataset_output_dir / "variance_distribution.png").resolve(),
+                f"{prefix}ece_plot": (dataset_output_dir / "ece_plot.png").resolve(),
+                f"{prefix}uncertainty_correlation_scatter": (dataset_output_dir / "uncertainty_correlation_scatter.png").resolve(),
+            }
+            preds_dir = dataset_output_dir / "preds"
+            if preds_dir.exists():
+                for p in sorted(preds_dir.glob("*.jpg")):
+                    wandb_images[f"{prefix}preds/{p.stem}"] = p
 
-    return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images, val_gnll
+    return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images, val_gnll
 
 if __name__ == "__main__":
     # ---- Load config and datasets (shared helper) ----
@@ -254,12 +278,12 @@ if __name__ == "__main__":
         name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
 
-        recalls, r_str, map_at_k, corr, mean_var, min_var, max_var, eval_wb, wandb_images, _ = eval_dataset(
+        recalls, r_str, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images, _ = eval_dataset(
             cfg, model, device, name, datasets_paths[name]["test"], wandb_step=None
         )
 
         wandb_utils.log_eval_dataset(
-            cfg, name, recalls, map_at_k, corr, mean_var, min_var, max_var, eval_wb, wandb_images
+            cfg, name, recalls, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images
         )
 
     logger.info("=" * 30 + "\nAll processes finished.")

@@ -197,8 +197,10 @@ def _resolve_log_dir(logs_folder: Optional[str],
 
 
 def setup_logging(logs_folder: Optional[str], dry_run: bool = False,
-                  resume_checkpoint: Optional[str] = None, resume_model: Optional[str] = None):
-    """Configure unified logging: console (INFO), info.log, debug.log."""
+                  resume_checkpoint: Optional[str] = None, resume_model: Optional[str] = None,
+                  use_wandb: bool = False):
+    """Configure unified logging: console (INFO), info.log, debug.log.
+    When use_wandb is True, create log_dir even in dry_run so W&B and eval paths (eval/dataset_name) work."""
     handlers = []
 
     console_handler = logging.StreamHandler(sys.stdout)
@@ -208,7 +210,7 @@ def setup_logging(logs_folder: Optional[str], dry_run: bool = False,
 
     log_dir = _resolve_log_dir(logs_folder, resume_checkpoint, resume_model)
 
-    if log_dir and not dry_run:
+    if log_dir and (not dry_run or use_wandb):
         log_dir.mkdir(parents=True, exist_ok=True)
         file_formatter = logging.Formatter(
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -275,7 +277,8 @@ def build_config():
     log_dir = setup_logging(merged.get("logs_folder"),
                             dry_run=merged.get("dry_run", False),
                             resume_checkpoint=merged.get("resume_train"),
-                            resume_model=merged.get("resume_model"))
+                            resume_model=merged.get("resume_model"),
+                            use_wandb=merged.get("use_wandb", False))
     merged['log_dir'] = str(log_dir) if log_dir else None
 
     for field in ("data_folder", "method"):

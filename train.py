@@ -110,8 +110,8 @@ def train(args, model, device, dataset_name, datasets_dir):
     best_val_gnll = float("inf")
     if args.get('resume_train') or args.get('resume_model'):
         logger.info("Verifying resumed model performance (before any training)...")
-        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_min_var, init_max_var, _, _, init_val_gnll = eval_dataset(
-            args, model, device, dataset_name, val_set_folder, log_dataset_info=False
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, _, _, init_val_gnll = eval_dataset(
+            args, model, device, dataset_name, val_set_folder, log_dataset_info=False,
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
         _xv = f"{init_max_var:.4f}" if init_max_var is not None else "N/A"
@@ -233,8 +233,8 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_gnll = eval_dataset(
-            args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_gnll = eval_dataset(
+            args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False,
         )
         if early_stop_metric == "val_gnll" and val_gnll is not None:
             is_best = val_gnll < best_val_gnll
@@ -246,7 +246,7 @@ def train(args, model, device, dataset_name, datasets_dir):
         wandb_utils.log_train_epoch(
             args, epoch_num, recalls, map_at_k, best_val_recall1, active_losses,
             epoch_variances, epoch_losses, epoch_losses_ce, epoch_losses_gnll,
-            uncertainty_corr, mean_query_variance, min_query_variance, max_query_variance,
+            uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance,
             eval_wandb_metrics, eval_wandb_images,
         )
 

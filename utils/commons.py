@@ -56,16 +56,24 @@ def copy_resume_model_to_log_dir(cfg, logger: logging.Logger):
     """
     If cfg['resume_model'] is set and exists on disk, copy it into cfg['log_dir'].
     This is shared between training and evaluation entrypoints.
+    Skip when dry_run (log_dir may not exist; copying would create a file at log_dir and break eval paths).
     """
     resume_model = cfg.get("resume_model")
     log_dir = cfg.get("log_dir")
 
     if not resume_model or not log_dir:
         return
+    if cfg.get("dry_run"):
+        return
 
     src = Path(resume_model)
     if not src.exists():
         logger.warning(f"resume_model path does not exist, skipping copy: {src}")
+        return
+
+    log_dir = Path(log_dir)
+    if not log_dir.is_dir():
+        logger.warning(f"log_dir is not a directory, skipping copy: {log_dir}")
         return
 
     try:
