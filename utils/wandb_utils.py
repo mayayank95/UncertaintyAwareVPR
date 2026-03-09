@@ -133,6 +133,7 @@ def log_train_epoch(
         return
     rv = _recall_values(cfg)
     metrics: Dict[str, Any] = {}
+    metrics["epoch"] = epoch_num
     # train/ first
     if active_losses:
         metrics["train/loss"] = float(np.mean(epoch_losses))

@@ -40,6 +40,9 @@ def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
     else:
         losses_str = str(losses).replace(",", "_").replace(" ", "").strip() or "ce"
     parts = [job_type, losses_str]
+    if args.get("model_mode") == "uncertainty":
+        vht = args.get("var_head_type", "linear")
+        parts.append(vht)
     if args.get("load_classifiers"):
         parts.append("load_clf")
     if args.get("freeze_model"):
