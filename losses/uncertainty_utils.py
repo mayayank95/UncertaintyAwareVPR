@@ -4,6 +4,7 @@ import math
 import torch
 
 from losses.gaussian_cosine_loss import GaussianCosineLoss
+from losses.vmf_loss import VMFLikelihood
 
 
 def compute_uncertainty_loss(
@@ -20,7 +21,7 @@ def compute_uncertainty_loss(
         input_norm: L2-normalized embeddings [N, D].
         target_norm: L2-normalized target vectors [N, D].
         variance: Predicted variance [N, D].
-        loss_type: 'gaussian_nll' or 'gaussian_cosine'.
+        loss_type: 'gaussian_nll', 'gaussian_cosine', or 'vmf'.
         lambda_: Scale factor applied to the loss.
 
     Returns:
@@ -30,8 +31,15 @@ def compute_uncertainty_loss(
     if loss_type == "gaussian_cosine":
         criterion = GaussianCosineLoss()
         loss = criterion(input_norm, target_norm, variance)
+    elif loss_type == "vmf":
+        d = input_norm.shape[1]
+        eps = 1e-7
+        kappa = torch.mean(variance, dim=-1, keepdim=True)  # [B, 1]
+        criterion = VMFLikelihood(d=d, eps=eps)
+        loss = criterion(input_norm, kappa, target_norm)
     else:
         criterion = torch.nn.GaussianNLLLoss()
         scale = math.sqrt(input_norm.shape[1])
         loss = criterion(input_norm * scale, target_norm * scale, variance)
     return lambda_ * loss
+

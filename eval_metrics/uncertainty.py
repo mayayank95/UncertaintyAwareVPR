@@ -47,7 +47,7 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
             q_norm = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
             db_norm = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
 
-            if loss_type == 'gaussian_cosine':
+            if loss_type in ('gaussian_cosine', 'vmf'):
                 dists = cosine_distance(q_norm, db_norm)
             else:
                 dists = torch.sum((q_norm - db_norm) ** 2, dim=-1)      
@@ -72,7 +72,7 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
                         x_line = np.linspace(dists_np.min(), dists_np.max(), 100)
                         ax.plot(x_line, np.polyval(coeffs, x_line), color='tomato', linewidth=2, label='Linear fit')
 
-                    dist_label = 'Cosine distance' if loss_type == 'gaussian_cosine' else 'L2 distance²'
+                    dist_label = 'Cosine distance' if loss_type in ('gaussian_cosine', 'vmf') else 'L2 distance²'
                     ax.set_xlabel(dist_label, fontsize=12)
                     ax.set_ylabel('Mean variance σ²', fontsize=12)
                     ax.set_title(f'Uncertainty vs Retrieval Distance  (Spearman ρ = {uncertainty_corr:.3f})', fontsize=13)

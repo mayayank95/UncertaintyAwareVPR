@@ -89,6 +89,15 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
             _stable_var_init(head, act_name)
         return head, True
 
+    if var_type == "vmf":
+        head = nn.Sequential(
+            nn.Linear(fc_output_dim, 1),
+            activation,
+        )
+        if opt.get("var_init"):
+            _stable_var_init(head, act_name)
+        return head, False
+
     raise ValueError(f"Unknown var_head_type: {var_type}")
 
 

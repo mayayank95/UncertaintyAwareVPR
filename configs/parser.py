@@ -94,7 +94,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model_mode", type=str, default=None, help="Model mode: basic or uncertainty")
     p.add_argument("--sigma_dim", type=int, default=None, help="Dimension of the variance output vector")
     p.add_argument("--uncertainty_lambda", type=float, default=1.0, help="Weight for the uncertainty loss")
-    p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll or gaussian_cosine")
+    p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll, gaussian_cosine, or vmf")
     p.add_argument("--var_head_type", type=str, default="linear",
                    choices=["activation", "linear", "mlp", "separate_agg"],
                    help="Variance head type: 'activation' (bare activation, no trainable params), "
