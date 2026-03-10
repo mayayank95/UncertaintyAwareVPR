@@ -32,10 +32,8 @@ def compute_uncertainty_loss(
         criterion = GaussianCosineLoss()
         loss = criterion(input_norm, target_norm, variance)
     elif loss_type == "vmf":
-        d = input_norm.shape[1]
-        eps = 1e-7
         kappa = torch.mean(variance, dim=-1, keepdim=True)  # [B, 1]
-        criterion = VMFLikelihood(d=d, eps=eps)
+        criterion = VMFLikelihood()
         loss = criterion(input_norm, kappa, target_norm)
     else:
         criterion = torch.nn.GaussianNLLLoss()

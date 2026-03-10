@@ -57,16 +57,14 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
     if var_type == "activation":
         return nn.Sequential(activation), False
 
+    needs_feature_map = False
+
     if var_type == "linear":
         head = nn.Sequential(
             nn.Linear(fc_output_dim, fc_output_dim),
             activation,
         )
-        if opt.get("var_init"):
-            _stable_var_init(head, act_name)
-        return head, False
-
-    if var_type == "mlp":
+    elif var_type == "mlp":
         backbone_name = opt.get("backbone", "ResNet18")
         features_dim = CHANNELS_NUM_IN_LAST_CONV[backbone_name]
         head = nn.Sequential(
@@ -77,28 +75,23 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
             nn.Linear(features_dim // 2, fc_output_dim),
             activation,
         )
-        if opt.get("var_init"):
-            _stable_var_init(head, act_name)
-        return head, True
-
-    if var_type == "separate_agg":
+        needs_feature_map = True
+    elif var_type == "separate_agg":
         assert aggregation is not None, "separate_agg requires the aggregation module"
         agg_copy = copy.deepcopy(aggregation)
         head = nn.Sequential(agg_copy, activation)
-        if opt.get("var_init"):
-            _stable_var_init(head, act_name)
-        return head, True
-
-    if var_type == "vmf":
+        needs_feature_map = True
+    elif var_type == "vmf":
         head = nn.Sequential(
             nn.Linear(fc_output_dim, 1),
             activation,
         )
-        if opt.get("var_init"):
-            _stable_var_init(head, act_name)
-        return head, False
+    else:
+        raise ValueError(f"Unknown var_head_type: {var_type}")
 
-    raise ValueError(f"Unknown var_head_type: {var_type}")
+    if opt.get("var_init"):
+        _stable_var_init(head, act_name)
+    return head, needs_feature_map
 
 
 class Uncertainty(GeoLocalizationNet):
