@@ -146,14 +146,16 @@ def log_train_epoch(
         metrics["train/std_variance"] = float(np.std(epoch_variances))
         metrics["train/min_variance"] = float(np.min(epoch_variances))
         metrics["train/max_variance"] = float(np.max(epoch_variances))
-    # val/ — order: recalls (all together), variance_distribution, loss(es), maps (all together), rest
-    # 1) Recalls first (all together)
-    metrics["val/best_recall_01"] = float(best_val_recall1)
-    _add_recall_metrics(metrics, "val/", recalls, rv)
-    # 2) Variance distribution image
+    # val/ — order: images (variance_distribution, correlation_scatter), recalls, loss(es), maps, rest
+    # 1) Images first
     epoch_images = _train_epoch_images_for_sections(eval_wandb_images)
     if "val/variance_distribution" in epoch_images and epoch_images["val/variance_distribution"] is not None:
         _merge_images_into_metrics(metrics, {"val/variance_distribution": epoch_images["val/variance_distribution"]})
+    if "val/uncertainty_correlation_scatter" in epoch_images and epoch_images["val/uncertainty_correlation_scatter"] is not None:
+        _merge_images_into_metrics(metrics, {"val/uncertainty_correlation_scatter": epoch_images["val/uncertainty_correlation_scatter"]})
+    # 2) Recalls (all together)
+    metrics["val/best_recall_01"] = float(best_val_recall1)
+    _add_recall_metrics(metrics, "val/", recalls, rv)
     # 3) Loss(es): use numeric prefix so W&B sorts them in order (01_ce, 02_uncertainty, 03_total)
     val_loss_parts: List[float] = []
     if "val/loss_ce" in eval_wandb_metrics:
@@ -181,7 +183,9 @@ def log_train_epoch(
     for k, v in eval_wandb_metrics.items():
         if not k.startswith("eval/") and k.startswith("val/") and k not in metrics and k not in _val_loss_keys_skip:
             metrics[k] = v
-    # ece/ — always log scalar metrics (use 0 when missing) so ECE panel and graphs exist
+    # ece/ — ECE plot first, then scalar metrics
+    if "ece/ece_plot" in epoch_images and epoch_images["ece/ece_plot"] is not None:
+        _merge_images_into_metrics(metrics, {"ece/ece_plot": epoch_images["ece/ece_plot"]})
     rv = _recall_values(cfg)
     for k in sorted(rv):
         key = f"ece/recall_{k:02d}"
@@ -190,12 +194,6 @@ def log_train_epoch(
         key = f"ece/map_{k:02d}"
         metrics[key] = float(eval_wandb_metrics.get(key, 0.0))
     metrics["ece/ap"] = float(eval_wandb_metrics.get("ece/ap", 0.0))
-    # ECE plot: same mechanism as variance_distribution — via _merge_images_into_metrics for time-series images per epoch
-    if "ece/ece_plot" in epoch_images and epoch_images["ece/ece_plot"] is not None:
-        _merge_images_into_metrics(metrics, {"ece/ece_plot": epoch_images["ece/ece_plot"]})
-    # Uncertainty correlation scatter plot
-    if "val/uncertainty_correlation_scatter" in epoch_images and epoch_images["val/uncertainty_correlation_scatter"] is not None:
-        _merge_images_into_metrics(metrics, {"val/uncertainty_correlation_scatter": epoch_images["val/uncertainty_correlation_scatter"]})
     log_wandb(metrics, step=epoch_num)
 
 
