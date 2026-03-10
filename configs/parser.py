@@ -187,7 +187,11 @@ def _resolve_log_dir(logs_folder: Optional[str],
                 timestamp = datetime.now().strftime("resume_model_%Y-%m-%d_%H-%M-%S")
                 return resume_path.parent / timestamp
             else:  # eval: fixed folder so re-runs append to the same log files
-                return resume_path.parent / "eval"
+                eval_dir = resume_path.parent / "eval"
+                if eval_dir.exists() and not eval_dir.is_dir():
+                    timestamp = datetime.now().strftime("eval_%Y-%m-%d_%H-%M-%S")
+                    eval_dir = resume_path.parent / timestamp
+                return eval_dir
 
     if logs_folder:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

@@ -87,8 +87,13 @@ def _merge_images_into_metrics(
         return
     import wandb as _wandb
     for key, img_path in images.items():
-        if Path(img_path).exists():
-            metrics[key] = _wandb.Image(str(img_path))
+        if isinstance(img_path, list):
+            valid_images = [Path(p) for p in img_path if Path(p).exists()]
+            if valid_images:
+                metrics[key] = [_wandb.Image(str(p)) for p in valid_images]
+        else:
+            if Path(img_path).exists():
+                metrics[key] = _wandb.Image(str(img_path))
 
 
 def _train_epoch_images_for_sections(images: Optional[Dict[str, Path]]) -> Dict[str, Path]:
@@ -97,14 +102,19 @@ def _train_epoch_images_for_sections(images: Optional[Dict[str, Path]]) -> Dict[
         return {}
     out = {}
     for key, path in images.items():
+        if isinstance(path, list):
+            if "predictions" in key:
+                out["val/predictions"] = path
+            continue
+            
         p = Path(path).resolve()
         if not p.exists():
             continue
         if "variance_distribution" in key:
             out["val/variance_distribution"] = p
-        if "ece_plot" in key:
+        elif "ece_plot" in key:
             out["ece/ece_plot"] = p
-        if "uncertainty_correlation_scatter" in key:
+        elif "uncertainty_correlation_scatter" in key:
             out["val/uncertainty_correlation_scatter"] = p
     return out
 
@@ -153,24 +163,15 @@ def log_train_epoch(
         _merge_images_into_metrics(metrics, {"val/variance_distribution": epoch_images["val/variance_distribution"]})
     if "val/uncertainty_correlation_scatter" in epoch_images and epoch_images["val/uncertainty_correlation_scatter"] is not None:
         _merge_images_into_metrics(metrics, {"val/uncertainty_correlation_scatter": epoch_images["val/uncertainty_correlation_scatter"]})
+    if "val/predictions" in epoch_images and epoch_images["val/predictions"]:
+        _merge_images_into_metrics(metrics, {"val/predictions": epoch_images["val/predictions"]})
+
     # 2) Recalls (all together)
     metrics["val/best_recall_01"] = float(best_val_recall1)
     _add_recall_metrics(metrics, "val/", recalls, rv)
-    # 3) Loss(es): use numeric prefix so W&B sorts them in order (01_ce, 02_uncertainty, 03_total)
-    val_loss_parts: List[float] = []
-    if "val/loss_ce" in eval_wandb_metrics:
-        v = float(eval_wandb_metrics["val/loss_ce"])
-        metrics["val/loss_01_ce"] = v
-        val_loss_parts.append(v)
-    elif "ce" in active_losses:
-        metrics["val/loss_01_ce"] = 0.0
-        val_loss_parts.append(0.0)
+    # 3) Loss(es): validation only has uncertainty loss, CE evaluates to 0
     if "val/loss_uncertainty" in eval_wandb_metrics:
-        v = float(eval_wandb_metrics["val/loss_uncertainty"])
-        metrics["val/loss_02_uncertainty"] = v
-        val_loss_parts.append(v)
-    if val_loss_parts:
-        metrics["val/loss_03_total"] = sum(val_loss_parts)
+        metrics["val/loss_uncertainty"] = float(eval_wandb_metrics["val/loss_uncertainty"])
     # 4) Maps (all together)
     _add_map_metrics(metrics, "val/", map_at_k, rv)
     # 5) Rest (uncertainty, then variance metrics grouped: mean, std, min, max)
@@ -210,21 +211,89 @@ def log_eval_dataset(
     eval_wandb_metrics: Dict[str, Any],
     eval_wandb_images: Optional[Dict[str, Path]] = None,
 ) -> None:
-    """Log evaluation metrics and images for one dataset to W&B. No-op if use_wandb is False.
-    Eval-only: no step; just scalars + ECE/variance plots + prediction images under eval/{dataset_name}/."""
+    """Log evaluation metrics and images for one dataset to W&B using Tables.
+    Eval-only: no step; Tables for metrics, Images for plots/preds under eval/{dataset_name}/."""
     if not cfg.get("use_wandb"):
         return
-    prefix = f"eval/{dataset_name}/"
+    import wandb as _wandb
+
+    prefix = f"Eval_{dataset_name}"
     rv = _recall_values(cfg)
     metrics: Dict[str, Any] = {}
-    _add_recall_metrics(metrics, prefix, recalls, rv)
-    _add_map_metrics(metrics, prefix, map_at_k, rv)
-    _add_uncertainty_metrics(
-        metrics, prefix,
-        uncertainty_corr, mean_variance, std_variance, min_variance, max_variance,
-    )
-    metrics.update(eval_wandb_metrics)
-    _merge_images_into_metrics(metrics, eval_wandb_images)
+
+    # --- 1. Recalls / mAP table ---
+    columns = ["Metric"] + [f"@{k}" for k in sorted(rv)]
+    data = []
+    # Recall row
+    recall_row = ["Recall"]
+    for k in sorted(rv):
+        i = rv.index(k)
+        recall_row.append(float(recalls[i]) if i < len(recalls) else 0.0)
+    data.append(recall_row)
+    # mAP row
+    if map_at_k is not None:
+        map_row = ["mAP"]
+        for k in sorted(rv):
+            i = rv.index(k)
+            map_row.append(float(map_at_k[i]) if i < len(map_at_k) else 0.0)
+        data.append(map_row)
+    metrics[f"{prefix}/retrieval_metrics"] = _wandb.Table(columns=columns, data=data)
+
+    # --- 2. ECE table (from eval_wandb_metrics) ---
+    ece_data = []
+    has_ece_recall = any(f"Eval_{dataset_name}/ece_recall_" in k for k in eval_wandb_metrics)
+    has_ece_map = any(f"Eval_{dataset_name}/ece_map_" in k for k in eval_wandb_metrics)
+    if has_ece_recall or has_ece_map:
+        ece_columns = ["Metric"] + [f"@{k}" for k in sorted(rv)]
+        if has_ece_recall:
+            row = ["ECE Recall"]
+            for k in sorted(rv):
+                key = f"Eval_{dataset_name}/ece_recall_{k:02d}"
+                row.append(float(eval_wandb_metrics.get(key, 0.0)))
+            ece_data.append(row)
+        if has_ece_map:
+            row = ["ECE mAP"]
+            for k in sorted(rv):
+                key = f"Eval_{dataset_name}/ece_map_{k:02d}"
+                row.append(float(eval_wandb_metrics.get(key, 0.0)))
+            ece_data.append(row)
+        if ece_data:
+            metrics[f"{prefix}/ece_metrics"] = _wandb.Table(columns=ece_columns, data=ece_data)
+
+    # --- 3. Variance statistics table ---
+    var_stats = {}
+    if uncertainty_corr is not None:
+        var_stats["Correlation"] = float(uncertainty_corr)
+    if mean_variance is not None:
+        var_stats["Mean"] = float(mean_variance)
+    if std_variance is not None:
+        var_stats["Std"] = float(std_variance)
+    if min_variance is not None:
+        var_stats["Min"] = float(min_variance)
+    if max_variance is not None:
+        var_stats["Max"] = float(max_variance)
+        
+    ece_ap_key = f"Eval_{dataset_name}/ece_ap"
+    if ece_ap_key in eval_wandb_metrics:
+        var_stats["ECE_AP"] = float(eval_wandb_metrics[ece_ap_key])
+        
+    if var_stats:
+        var_columns = list(var_stats.keys())
+        var_data = [[var_stats[c] for c in var_columns]]
+        metrics[f"{prefix}/variance_statistics"] = _wandb.Table(columns=var_columns, data=var_data)
+
+    # --- 4. Plots as images ---
+    if eval_wandb_images:
+        for key, img_path in eval_wandb_images.items():
+            if isinstance(img_path, list):
+                valid_images = [Path(p) for p in img_path if Path(p).exists()]
+                if valid_images:
+                    metrics[key] = [_wandb.Image(str(p)) for p in valid_images]
+            else:
+                p = Path(img_path)
+                if p.exists():
+                    metrics[key] = _wandb.Image(str(p))
+
     log_wandb(metrics)
 
 

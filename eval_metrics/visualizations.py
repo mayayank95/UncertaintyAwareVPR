@@ -11,20 +11,48 @@ logger = logging.getLogger(__name__)
 
 # Height and width of a single image for visualization
 IMG_HW = 512
-TEXT_H = 175
-FONTSIZE = 50
+TEXT_H = 80
+FONTSIZE = 30
+OVERLAY_FONTSIZE = 20
 SPACE = 50  # Space between two images
+
+_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+
+def _get_font(size):
+    try:
+        return ImageFont.truetype(_FONT_PATH, size)
+    except OSError:
+        return ImageFont.load_default()
 
 
 def write_labels_to_image(labels=["text1", "text2"]):
-    """Creates an image with text"""
-    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONTSIZE)
-    img = Image.new("RGB", ((IMG_HW * len(labels)) + 50 * (len(labels) - 1), TEXT_H), (1, 1, 1))
+    """Creates an image with text labels (Query, Pred0 - True/False, ...)."""
+    font = _get_font(FONTSIZE)
+    img = Image.new("RGB", ((IMG_HW * len(labels)) + SPACE * (len(labels) - 1), TEXT_H), (255, 255, 255))
     d = ImageDraw.Draw(img)
     for i, text in enumerate(labels):
         _, _, w, h = d.textbbox((0, 0), text, font=font)
-        d.text(((IMG_HW + SPACE) * i + IMG_HW // 2 - w // 2, 1), text, fill=(0, 0, 0), font=font)
-    return Image.fromarray(np.array(img)[:100] * 255)  # Remove some empty space
+        x = (IMG_HW + SPACE) * i + IMG_HW // 2 - w // 2
+        d.text((x, (TEXT_H - h) // 2), text, fill=(0, 0, 0), font=font)
+    return img
+
+
+def _draw_overlay(img, lines):
+    """Draw semi-transparent overlay with text lines at the top of a PIL image."""
+    if not lines:
+        return img
+    font = _get_font(OVERLAY_FONTSIZE)
+    draw = ImageDraw.Draw(img)
+    line_h = OVERLAY_FONTSIZE + 4
+    strip_h = line_h * len(lines) + 6
+    # Semi-transparent dark strip
+    overlay = Image.new("RGBA", (img.width, strip_h), (0, 0, 0, 160))
+    img.paste(Image.alpha_composite(Image.new("RGBA", overlay.size, (0, 0, 0, 0)), overlay).convert("RGB"), (0, 0))
+    draw = ImageDraw.Draw(img)
+    for i, text in enumerate(lines):
+        draw.text((6, 3 + i * line_h), text, fill=(255, 255, 255), font=font)
+    return img
 
 
 def draw_box(img, c=(0, 1, 0), thickness=20):
@@ -40,23 +68,24 @@ def draw_box(img, c=(0, 1, 0), thickness=20):
     return tfm.ToPILImage()(img)
 
 
-def build_prediction_image(images_paths, preds_correct, distances=None, query_variance=None):
+def build_prediction_image(images_paths, preds_correct, distances=None,
+                           query_variance=None, pred_variances=None,
+                           gt_images_paths=None, gt_distances=None, gt_variances=None):
     """Build a row of images, where the first is the query and the rest are predictions.
     For each image, if is_correct then draw a green/red box.
+    Overlays variance and distance text directly on each image.
     distances: optional list of L2 distances for each prediction (after Query).
     query_variance: optional float, query's mean variance (uncertainty).
+    pred_variances: optional list of floats, per-prediction db item mean variance.
     """
     assert len(images_paths) == len(preds_correct)
-    query_label = "Query"
-    if query_variance is not None:
-        query_label += f" (var: {query_variance:.3f})"
-    labels = [query_label]
+    # Clean labels (no variance/distance — those go on the overlay)
+    labels = ["Query"]
     for i, is_correct in enumerate(preds_correct[1:]):
-        dist_str = f" (dist: {distances[i]:.3f})" if distances is not None else ""
         if is_correct is None:
-            labels.append(f"Pred{i}{dist_str}")
+            labels.append(f"Pred{i}")
         else:
-            labels.append(f"Pred{i} - {is_correct}{dist_str}")
+            labels.append(f"Pred{i} - {'✓' if is_correct else '✗'}")
 
     images = [Image.open(path).convert("RGB") for path in images_paths]
     for img_idx, (img, is_correct) in enumerate(zip(images, preds_correct)):
@@ -66,22 +95,80 @@ def build_prediction_image(images_paths, preds_correct, distances=None, query_va
         img = draw_box(img, color)
         images[img_idx] = img
 
-    resized_images = [tfm.Resize(510, max_size=IMG_HW, antialias=True)(img) for img in images]
-    resized_images = [ImageOps.pad(img, (IMG_HW, IMG_HW), color='white') for img in images]  # Apply padding to make them squared
+    resized_images = [ImageOps.pad(img.resize((IMG_HW, IMG_HW)), (IMG_HW, IMG_HW), color='white') for img in images]
 
-    total_h = len(resized_images)*IMG_HW + max(0,len(resized_images)-1)*SPACE # 2
-    concat_image = Image.new('RGB', (total_h, IMG_HW), (255, 255, 255))
-    y=0
+    # Draw overlays on each image
+    for idx, img in enumerate(resized_images):
+        overlay_lines = []
+        if idx == 0:
+            # Query image: show query variance
+            if query_variance is not None:
+                overlay_lines.append(f"var: {query_variance:.4f}")
+        else:
+            # Prediction image: show db variance and distance
+            pred_idx = idx - 1
+            if pred_variances is not None and pred_idx < len(pred_variances):
+                overlay_lines.append(f"var: {pred_variances[pred_idx]:.4f}")
+            if distances is not None and pred_idx < len(distances):
+                overlay_lines.append(f"dist: {distances[pred_idx]:.4f}")
+        resized_images[idx] = _draw_overlay(img, overlay_lines)
+
+    total_w = len(resized_images) * IMG_HW + max(0, len(resized_images) - 1) * SPACE
+    concat_image = Image.new('RGB', (total_w, IMG_HW), (255, 255, 255))
+    x = 0
     for img in resized_images:
-        concat_image.paste(img, (y, 0))
-        y += IMG_HW + SPACE
+        concat_image.paste(img, (x, 0))
+        x += IMG_HW + SPACE
 
     try:
         labels_image = write_labels_to_image(labels)
-        # Transform the images to np arrays for concatenation
         final_image = Image.fromarray(np.concatenate((np.array(labels_image), np.array(concat_image)), axis=0))
-    except OSError:  # Handle error in case of missing PIL ImageFont
+    except OSError:
         final_image = concat_image
+
+    if gt_images_paths:
+        gt_labels = [""] + [f"GT{i}" for i in range(len(gt_images_paths))]
+        gt_images = [Image.new('RGB', (IMG_HW, IMG_HW), (255, 255, 255))]
+        for path in gt_images_paths:
+            img = Image.open(path).convert("RGB")
+            img = draw_box(img, (0, 0, 1))
+            gt_images.append(img)
+            
+        gt_resized = [ImageOps.pad(img.resize((IMG_HW, IMG_HW)), (IMG_HW, IMG_HW), color='white') for img in gt_images]
+        
+        for idx in range(1, len(gt_resized)):
+            overlay_lines = []
+            gt_idx = idx - 1
+            if gt_variances is not None and gt_idx < len(gt_variances):
+                overlay_lines.append(f"var: {gt_variances[gt_idx]:.4f}")
+            if gt_distances is not None and gt_idx < len(gt_distances):
+                overlay_lines.append(f"dist: {gt_distances[gt_idx]:.4f}")
+            gt_resized[idx] = _draw_overlay(gt_resized[idx], overlay_lines)
+            
+        row2_w = len(gt_resized) * IMG_HW + max(0, len(gt_resized) - 1) * SPACE
+        row2_image = Image.new('RGB', (max(total_w, row2_w), IMG_HW), (255, 255, 255))
+        x = 0
+        for img in gt_resized:
+            row2_image.paste(img, (x, 0))
+            x += IMG_HW + SPACE
+            
+        try:
+            # Create a label strip for GT wide enough
+            gt_labels_img_base = write_labels_to_image(gt_labels)
+            gt_labels_image = Image.new('RGB', (max(total_w, row2_w), TEXT_H), (255, 255, 255))
+            gt_labels_image.paste(gt_labels_img_base, (0, 0))
+            
+            row2_combined = np.concatenate((np.array(gt_labels_image), np.array(row2_image)), axis=0)
+            
+            # Ensure final_image and row2_combined have the same width
+            if final_image.width < row2_combined.shape[1]:
+                new_fi = Image.new('RGB', (row2_combined.shape[1], final_image.height), (255, 255, 255))
+                new_fi.paste(final_image, (0, 0))
+                final_image = new_fi
+                
+            final_image = Image.fromarray(np.concatenate((np.array(final_image), row2_combined), axis=0))
+        except OSError:
+            pass
 
     return final_image
 
@@ -106,7 +193,7 @@ def save_file_with_paths(query_path, preds_paths, positives_paths, output_path, 
 
 
 def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_labels=True, num_preds_to_viz=None,
-               distances=None, query_variances=None):
+               distances=None, query_variances=None, db_variances=None, all_descriptors=None):
     """For each query, save an image containing the query and its predictions,
     and a file with the paths of the query, its predictions and its positives.
 
@@ -120,6 +207,7 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
         i.e. the ones where the first pred is uncorrect (further than 25 m)
     distances : np.array of shape [num_queries x num_preds], optional. L2 distance per prediction.
     query_variances : np.array of shape [num_queries], optional. Mean variance (uncertainty) per query.
+    db_variances : np.array of shape [num_database, D], optional. Variance vectors for each database item.
     """
     if use_labels:
         positives_per_query = eval_ds.get_positives()
@@ -145,9 +233,30 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
             continue
 
         query_dists = distances[query_index].tolist() if distances is not None else None
+        gt_images_paths = None
+        gt_distances = None
+        gt_variances = None
+
+        if use_labels:
+            gt_indices = positives_per_query[query_index][:3] # up to 3 GT images
+            if len(gt_indices) > 0:
+                gt_images_paths = [eval_ds.database_paths[idx] for idx in gt_indices]
+                if all_descriptors is not None:
+                    q_feat = all_descriptors[eval_ds.num_database + query_index]
+                    gt_feats = all_descriptors[gt_indices]
+                    gt_distances = [float(np.linalg.norm(q_feat - f)) for f in gt_feats]
+                if db_variances is not None:
+                    gt_variances = [float(np.mean(db_variances[idx])) for idx in gt_indices]
+
         q_var = float(query_variances[query_index]) if query_variances is not None else None
+        # Per-prediction database item mean variances
+        pred_vars = None
+        if db_variances is not None:
+            pred_vars = [float(np.mean(db_variances[p])) for p in preds]
         prediction_image = build_prediction_image(list_of_images_paths, preds_correct, distances=query_dists,
-                                                 query_variance=q_var)
+                                                 query_variance=q_var, pred_variances=pred_vars,
+                                                 gt_images_paths=gt_images_paths, gt_distances=gt_distances,
+                                                 gt_variances=gt_variances)
         pred_image_path = viz_dir / f"{query_index:03d}.jpg"
         prediction_image.save(pred_image_path)
 
