@@ -9,48 +9,29 @@ class VMFLikelihood(torch.nn.Module):
         self.d = d
         self.eps = eps
 
-    @staticmethod
-    def _scipy_log_ive(v, kappa):
-        """Compute log(I_v(kappa) * e^{-kappa}) + kappa = log(I_v(kappa))
-        using scipy for general order v. Returns a tensor on the same device."""
-        kappa_np = kappa.detach().cpu().numpy()
-        ive_vals = scipy_ive(v, kappa_np)
-        # Clamp to avoid log(0)
-        ive_vals[ive_vals <= 0] = 1e-30
-        log_ive = torch.tensor(ive_vals, dtype=kappa.dtype, device=kappa.device).log()
-        return log_ive + kappa  # log(I_v(kappa))
-
-    def log_bessel_approx(self, kappa):
+    def log_partition_function(self, kappa):
         """
-        Approximates log(Z_d(kappa)) for high dimensions.
-        Uses the approximation: 
-        log Z_d(kappa) ≈ (d-1)/2 * log(kappa) - kappa + constant
-        Note: In most training scenarios, we only need terms involving kappa.
+        Approximates log(Z_d(kappa)) in a fully differentiable, numerically stable way.
+        Uses the integral of the Amos (2020) stable ratio approx for A_d(kappa):
+        A_d(kappa) = I_{d/2}(kappa)/I_{d/2-1}(kappa) ≈ kappa / (v + sqrt(kappa^2 + v^2))
+        where v = (d-1)/2. Integrating this yields the log-partition function mathematically.
         """
-        # A more robust approximation for log-partition function in high-D:
-        # log Z_d(kappa) = kappa * sqrt(1 + (d/kappa)^2) ... (asymptotic)
-        # For training, we often use the simplified form derived from 
-        # the saddle-point approximation.
+        v = (self.d - 1) / 2.0
         
-        v = (self.d - 1) / 2
-        # Use log1p for stability if kappa is near zero
-        #return v * torch.log(kappa + self.eps) - kappa 
-
-        # Asymptotic approximation (accurate for large kappa):
-        asymptotic = kappa + v * torch.log(kappa) - 0.5 * math.log(2 * math.pi) - 0.5 * torch.log(kappa)
-        # Exact computation via scipy (for small kappa):
-        exact = self._scipy_log_ive(v, kappa)
-
-        # A stable implementation for training:
-        log_iv = torch.where(
-            kappa > 10, 
-            asymptotic,
-            exact
-        )
-
-        return v * torch.log(kappa + self.eps) - (self.d / 2) * torch.log(torch.tensor(2 * torch.pi)) - log_iv
-
-
+        # Use simple eps to prevent zero gradient exactly at kappa=0
+        kappa_eps = kappa + self.eps
+        y = torch.sqrt(kappa_eps**2 + v**2)
+        
+        # Integral of Amos approximation formulation
+        integral = y - v * torch.log(v + y)
+        
+        # Integration constant c = log Z_d(0) - integral(0)
+        # Z_d(0) is the surface area of the d-dimensional unit hypersphere.
+        log_z0 = math.log(2.0) + (self.d / 2.0) * math.log(math.pi) - math.lgamma(self.d / 2.0)
+        integral_0 = v - v * math.log(2.0 * v)
+        c = log_z0 - integral_0
+        
+        return integral + c
 
     def forward(self, mu, kappa, target):
         """
@@ -63,14 +44,12 @@ class VMFLikelihood(torch.nn.Module):
         target = F.normalize(target, p=2, dim=-1)
         
         # 2. Dot product (Cosine Similarity)
-        # We want to maximize kappa * dot_product
         dot_prod = torch.sum(mu * target, dim=-1, keepdim=True)
         
         # 3. vMF Log-Likelihood
-        # NLL = - (kappa * cos_sim - log_partition)
-        # We simplify the normalization constant for the loss
-        log_partition = self.log_bessel_approx(kappa)
+        # NLL = -kappa * cos_sim + log_Z_d(kappa)
+        log_z_d = self.log_partition_function(kappa)
         
-        loss = -(kappa * dot_prod + log_partition)
+        loss = -kappa * dot_prod + log_z_d
         
         return loss.mean()
