@@ -221,66 +221,88 @@ def log_eval_dataset(
     rv = _recall_values(cfg)
     metrics: Dict[str, Any] = {}
 
-    # --- 1. Recalls / mAP table ---
-    columns = ["Metric"] + [f"@{k}" for k in sorted(rv)]
-    data = []
-    # Recall row
+    # Helper: build a styled HTML table from headers + rows (no pagination!)
+    def _html_table(headers, rows):
+        style = (
+            "style='border-collapse:collapse;width:100%;font-family:monospace;font-size:16px;'"
+        )
+        th_style = "style='border:1px solid #555;padding:8px;background:#2a2a2a;color:#eee;text-align:center;'"
+        td_style = "style='border:1px solid #555;padding:8px;text-align:center;'"
+        td_label = "style='border:1px solid #555;padding:8px;text-align:left;font-weight:bold;'"
+        html = f"<table {style}><tr>"
+        for h in headers:
+            html += f"<th {th_style}>{h}</th>"
+        html += "</tr>"
+        for row in rows:
+            html += "<tr>"
+            for i, cell in enumerate(row):
+                s = td_label if i == 0 else td_style
+                if isinstance(cell, float):
+                    cell = f"{cell:.2f}"
+                html += f"<td {s}>{cell}</td>"
+            html += "</tr>"
+        html += "</table>"
+        return _wandb.Html(html)
+
+    # --- 1. Retrieval metrics table ---
+    ret_headers = ["Metric"] + [f"@{k}" for k in sorted(rv)]
+    ret_rows = []
     recall_row = ["Recall"]
     for k in sorted(rv):
         i = rv.index(k)
         recall_row.append(float(recalls[i]) if i < len(recalls) else 0.0)
-    data.append(recall_row)
-    # mAP row
+    ret_rows.append(recall_row)
     if map_at_k is not None:
         map_row = ["mAP"]
         for k in sorted(rv):
             i = rv.index(k)
             map_row.append(float(map_at_k[i]) if i < len(map_at_k) else 0.0)
-        data.append(map_row)
-    metrics[f"{prefix}/retrieval_metrics"] = _wandb.Table(columns=columns, data=data)
+        ret_rows.append(map_row)
+    metrics[f"{prefix}/retrieval_metrics"] = _html_table(ret_headers, ret_rows)
 
-    # --- 2. ECE table (from eval_wandb_metrics) ---
-    ece_data = []
+    # --- 2. ECE metrics table ---
+    ece_rows = []
     has_ece_recall = any(f"Eval_{dataset_name}/ece_recall_" in k for k in eval_wandb_metrics)
     has_ece_map = any(f"Eval_{dataset_name}/ece_map_" in k for k in eval_wandb_metrics)
-    if has_ece_recall or has_ece_map:
-        ece_columns = ["Metric"] + [f"@{k}" for k in sorted(rv)]
-        if has_ece_recall:
-            row = ["ECE Recall"]
-            for k in sorted(rv):
-                key = f"Eval_{dataset_name}/ece_recall_{k:02d}"
-                row.append(float(eval_wandb_metrics.get(key, 0.0)))
-            ece_data.append(row)
-        if has_ece_map:
-            row = ["ECE mAP"]
-            for k in sorted(rv):
-                key = f"Eval_{dataset_name}/ece_map_{k:02d}"
-                row.append(float(eval_wandb_metrics.get(key, 0.0)))
-            ece_data.append(row)
-        if ece_data:
-            metrics[f"{prefix}/ece_metrics"] = _wandb.Table(columns=ece_columns, data=ece_data)
-
-    # --- 3. Variance statistics table ---
-    var_stats = {}
-    if uncertainty_corr is not None:
-        var_stats["Correlation"] = float(uncertainty_corr)
-    if mean_variance is not None:
-        var_stats["Mean"] = float(mean_variance)
-    if std_variance is not None:
-        var_stats["Std"] = float(std_variance)
-    if min_variance is not None:
-        var_stats["Min"] = float(min_variance)
-    if max_variance is not None:
-        var_stats["Max"] = float(max_variance)
-        
+    if has_ece_recall:
+        row = ["ECE Recall"]
+        for k in sorted(rv):
+            key = f"Eval_{dataset_name}/ece_recall_{k:02d}"
+            row.append(float(eval_wandb_metrics.get(key, 0.0)))
+        ece_rows.append(row)
+    if has_ece_map:
+        row = ["ECE mAP"]
+        for k in sorted(rv):
+            key = f"Eval_{dataset_name}/ece_map_{k:02d}"
+            row.append(float(eval_wandb_metrics.get(key, 0.0)))
+        ece_rows.append(row)
     ece_ap_key = f"Eval_{dataset_name}/ece_ap"
     if ece_ap_key in eval_wandb_metrics:
-        var_stats["ECE_AP"] = float(eval_wandb_metrics[ece_ap_key])
-        
-    if var_stats:
-        var_columns = list(var_stats.keys())
-        var_data = [[var_stats[c] for c in var_columns]]
-        metrics[f"{prefix}/variance_statistics"] = _wandb.Table(columns=var_columns, data=var_data)
+        ece_rows.append(["ECE AP", float(eval_wandb_metrics[ece_ap_key])])
+    if ece_rows:
+        ece_headers = ["Metric"] + [f"@{k}" for k in sorted(rv)]
+        metrics[f"{prefix}/ece_metrics"] = _html_table(ece_headers, ece_rows)
+
+    # --- 3. Variance / uncertainty statistics table ---
+    var_headers = []
+    var_row = []
+    if uncertainty_corr is not None:
+        var_headers.append("Correlation")
+        var_row.append(float(uncertainty_corr))
+    if mean_variance is not None:
+        var_headers.append("Mean")
+        var_row.append(float(mean_variance))
+    if std_variance is not None:
+        var_headers.append("Std")
+        var_row.append(float(std_variance))
+    if min_variance is not None:
+        var_headers.append("Min")
+        var_row.append(float(min_variance))
+    if max_variance is not None:
+        var_headers.append("Max")
+        var_row.append(float(max_variance))
+    if var_headers:
+        metrics[f"{prefix}/variance_statistics"] = _html_table(var_headers, [var_row])
 
     # --- 4. Plots as images ---
     if eval_wandb_images:

@@ -54,6 +54,9 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
     act_name = opt.get("variance_activation", "softplus") or "softplus"
     activation = nn.Sigmoid() if act_name == "sigmoid" else nn.Softplus()
 
+    backbone_name = opt.get("backbone", "ResNet18")
+    features_dim = CHANNELS_NUM_IN_LAST_CONV[backbone_name]
+
     if var_type == "activation":
         return nn.Sequential(activation), False
 
@@ -61,12 +64,11 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
 
     if var_type == "linear":
         head = nn.Sequential(
-            nn.Linear(fc_output_dim, fc_output_dim),
+            nn.Linear(features_dim, fc_output_dim),
             activation,
         )
     elif var_type == "mlp":
-        backbone_name = opt.get("backbone", "ResNet18")
-        features_dim = CHANNELS_NUM_IN_LAST_CONV[backbone_name]
+        
         head = nn.Sequential(
             GeM(),
             Flatten(),
@@ -80,6 +82,11 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
         assert aggregation is not None, "separate_agg requires the aggregation module"
         agg_copy = copy.deepcopy(aggregation)
         head = nn.Sequential(agg_copy, activation)
+        needs_feature_map = True
+    elif var_type == "separate_linear_agg":
+        assert aggregation is not None, "separate_agg requires the aggregation module"
+        agg_copy = copy.deepcopy(aggregation)
+        head = nn.Sequential(agg_copy,nn.Linear(features_dim, fc_output_dim), activation)
         needs_feature_map = True
     elif var_type == "vmf":
         head = nn.Sequential(
