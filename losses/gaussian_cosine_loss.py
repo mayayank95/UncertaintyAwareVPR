@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
-from utils.util import cosine_distance
 
+def cosine_distance(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+    """Pairwise cosine distance between corresponding vectors. Returns shape [B], range [0, 2]."""
+    cos_sim = torch.sum(x1 * x2, dim=-1)
+    cos_sim = torch.clamp(cos_sim, -1.0, 1.0)
+    return 1.0 - cos_sim
 
 class GaussianCosineLoss(nn.Module):
     """Gaussian NLL-inspired loss using cosine distance instead of per-element L2.

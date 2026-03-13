@@ -244,7 +244,9 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
                 if all_descriptors is not None:
                     q_feat = all_descriptors[eval_ds.num_database + query_index]
                     gt_feats = all_descriptors[gt_indices]
-                    gt_distances = [float(np.linalg.norm(q_feat - f)) for f in gt_feats]
+                    # FAISS IndexFlatL2 returns squared Euclidean distance. 
+                    # Compute squared Euclidean distance for GT images to match.
+                    gt_distances = [float(np.linalg.norm(q_feat - f)**2) for f in gt_feats]
                 if db_variances is not None:
                     gt_variances = [float(np.mean(db_variances[idx])) for idx in gt_indices]
 

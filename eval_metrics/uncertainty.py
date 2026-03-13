@@ -2,7 +2,7 @@ import logging
 import numpy as np
 import torch
 from scipy.stats import spearmanr
-from utils.util import cosine_distance
+from losses.gaussian_cosine_loss import cosine_distance
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -52,8 +52,8 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
             else:
                 dists = torch.sum((q_norm - db_norm) ** 2, dim=-1)      
             mean_vars = torch.mean(q_var_tensor, dim=-1)
-            dists_np = dists.numpy()
-            mean_vars_np = mean_vars.numpy()
+            dists_np = dists.detach().cpu().numpy()
+            mean_vars_np = mean_vars.detach().cpu().numpy()
             uncertainty_corr = _compute_correlation(dists_np, mean_vars_np)
 
             # --- Scatter plot: distance vs mean variance ---

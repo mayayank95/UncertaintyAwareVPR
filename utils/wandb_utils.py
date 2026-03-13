@@ -250,13 +250,17 @@ def log_eval_dataset(
     recall_row = ["Recall"]
     for k in sorted(rv):
         i = rv.index(k)
-        recall_row.append(float(recalls[i]) if i < len(recalls) else 0.0)
+        val = float(recalls[i]) if i < len(recalls) else 0.0
+        recall_row.append(val)
+        metrics[f"{prefix}/{_recall_key(k)}"] = val
     ret_rows.append(recall_row)
     if map_at_k is not None:
         map_row = ["mAP"]
         for k in sorted(rv):
             i = rv.index(k)
-            map_row.append(float(map_at_k[i]) if i < len(map_at_k) else 0.0)
+            val = float(map_at_k[i]) if i < len(map_at_k) else 0.0
+            map_row.append(val)
+            metrics[f"{prefix}/{_map_key(k)}"] = val
         ret_rows.append(map_row)
     metrics[f"{prefix}/retrieval_metrics"] = _html_table(ret_headers, ret_rows)
 
@@ -268,17 +272,24 @@ def log_eval_dataset(
         row = ["ECE Recall"]
         for k in sorted(rv):
             key = f"Eval_{dataset_name}/ece_recall_{k:02d}"
-            row.append(float(eval_wandb_metrics.get(key, 0.0)))
+            val = float(eval_wandb_metrics.get(key, 0.0))
+            row.append(val)
+            metrics[key] = val # Key already prefixed correctly
         ece_rows.append(row)
     if has_ece_map:
         row = ["ECE mAP"]
         for k in sorted(rv):
             key = f"Eval_{dataset_name}/ece_map_{k:02d}"
-            row.append(float(eval_wandb_metrics.get(key, 0.0)))
+            val = float(eval_wandb_metrics.get(key, 0.0))
+            row.append(val)
+            metrics[key] = val
         ece_rows.append(row)
     ece_ap_key = f"Eval_{dataset_name}/ece_ap"
     if ece_ap_key in eval_wandb_metrics:
-        ece_rows.append(["ECE AP", float(eval_wandb_metrics[ece_ap_key])])
+        val = float(eval_wandb_metrics[ece_ap_key])
+        ece_rows.append(["ECE AP", val])
+        metrics[ece_ap_key] = val
+        
     if ece_rows:
         ece_headers = ["Metric"] + [f"@{k}" for k in sorted(rv)]
         metrics[f"{prefix}/ece_metrics"] = _html_table(ece_headers, ece_rows)
@@ -288,19 +299,29 @@ def log_eval_dataset(
     var_row = []
     if uncertainty_corr is not None:
         var_headers.append("Correlation")
-        var_row.append(float(uncertainty_corr))
+        val = float(uncertainty_corr)
+        var_row.append(val)
+        metrics[f"{prefix}/uncertainty_correlation"] = val
     if mean_variance is not None:
         var_headers.append("Mean")
-        var_row.append(float(mean_variance))
+        val = float(mean_variance)
+        var_row.append(val)
+        metrics[f"{prefix}/variance_mean"] = val
     if std_variance is not None:
         var_headers.append("Std")
-        var_row.append(float(std_variance))
+        val = float(std_variance)
+        var_row.append(val)
+        metrics[f"{prefix}/variance_std"] = val
     if min_variance is not None:
         var_headers.append("Min")
-        var_row.append(float(min_variance))
+        val = float(min_variance)
+        var_row.append(val)
+        metrics[f"{prefix}/variance_min"] = val
     if max_variance is not None:
         var_headers.append("Max")
-        var_row.append(float(max_variance))
+        val = float(max_variance)
+        var_row.append(val)
+        metrics[f"{prefix}/variance_max"] = val
     if var_headers:
         metrics[f"{prefix}/variance_statistics"] = _html_table(var_headers, [var_row])
 
@@ -315,6 +336,13 @@ def log_eval_dataset(
                 p = Path(img_path)
                 if p.exists():
                     metrics[key] = _wandb.Image(str(p))
+
+    # --- 5. Raw scalar metrics from evaluation results ---
+    # GNLL and ECE scalars were already added to metrics in steps 1-3 or passed in eval_wandb_metrics.
+    # We update metrics with anything left in eval_wandb_metrics (like val_loss_uncertainty).
+    for k, v in eval_wandb_metrics.items():
+        if k not in metrics:
+            metrics[k] = v
 
     log_wandb(metrics)
 

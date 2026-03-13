@@ -7,11 +7,7 @@ import torch
 from losses.cosface_loss import MarginCosineProduct
 
 
-def cosine_distance(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
-    """Pairwise cosine distance between corresponding vectors. Returns shape [B], range [0, 2]."""
-    cos_sim = torch.sum(x1 * x2, dim=-1)
-    cos_sim = torch.clamp(cos_sim, -1.0, 1.0)
-    return 1.0 - cos_sim
+
 
 
 def move_to_device(optimizer: Type[torch.optim.Optimizer], device: str):

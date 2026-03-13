@@ -33,16 +33,27 @@ def init_model(args: Dict[str, Any]):
 
 
 def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
-    """Build default run name from losses and optional flags."""
+    """Build default run name from job_type, var_head, losses and optional flags."""
     losses = args.get("losses") or "ce"
     if isinstance(losses, list):
         losses_str = "_".join(str(l).strip() for l in losses) if losses else "ce"
     else:
         losses_str = str(losses).replace(",", "_").replace(" ", "").strip() or "ce"
-    parts = [job_type, losses_str]
+    
+    parts = [job_type]
+    
+    # var_head (only if uncertainty mode is enabled)
     if args.get("model_mode") == "uncertainty":
         vht = args.get("var_head_type", "linear")
         parts.append(vht)
+    
+    # loss
+    parts.append(losses_str)
+    
+    # if init_var flag on
+    if args.get("var_init"):
+        parts.append("init_var")
+        
     if args.get("load_classifiers"):
         parts.append("load_clf")
     if args.get("freeze_model"):
