@@ -181,6 +181,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
                 output_dir=dataset_output_dir if save_ece_plot else None,
                 metrics=ece_metrics,
                 distances=distances,
+                uncertainty_loss=args.get('uncertainty_loss', 'gaussian_nll'),
             )
     # --- 4. Visualizations & Plots ---
     save_plots = args.get("save_plots", False) or args.get("use_wandb", False)

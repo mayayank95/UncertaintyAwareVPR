@@ -51,7 +51,15 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
                 dists = cosine_distance(q_norm, db_norm)
             else:
                 dists = torch.sum((q_norm - db_norm) ** 2, dim=-1)      
+            
             mean_vars = torch.mean(q_var_tensor, dim=-1)
+            
+            # For vMF, mean_vars is concentration (kappa).
+            # We invert it so higher value = higher uncertainty,
+            # which matches Gaussian logic where high distance should correlate with high value.
+            if loss_type == 'vmf':
+                mean_vars = 1.0 / (mean_vars + 1e-6)
+                
             dists_np = dists.detach().cpu().numpy()
             mean_vars_np = mean_vars.detach().cpu().numpy()
             uncertainty_corr = _compute_correlation(dists_np, mean_vars_np)
@@ -74,7 +82,7 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
 
                     dist_label = 'Cosine distance' if loss_type in ('gaussian_cosine', 'vmf') else 'L2 distance²'
                     ax.set_xlabel(dist_label, fontsize=12)
-                    ax.set_ylabel('Mean variance σ²', fontsize=12)
+                    ax.set_ylabel('Uncertainty', fontsize=12)
                     ax.set_title(f'Uncertainty vs Retrieval Distance  (Spearman ρ = {uncertainty_corr:.3f})', fontsize=13)
                     ax.legend(fontsize=10)
                     ax.grid(True, alpha=0.3)

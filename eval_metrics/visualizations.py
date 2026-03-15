@@ -103,12 +103,12 @@ def build_prediction_image(images_paths, preds_correct, distances=None,
         if idx == 0:
             # Query image: show query variance
             if query_variance is not None:
-                overlay_lines.append(f"var: {query_variance:.4f}")
+                overlay_lines.append(f"unc: {query_variance:.4f}")
         else:
             # Prediction image: show db variance and distance
             pred_idx = idx - 1
             if pred_variances is not None and pred_idx < len(pred_variances):
-                overlay_lines.append(f"var: {pred_variances[pred_idx]:.4f}")
+                overlay_lines.append(f"unc: {pred_variances[pred_idx]:.4f}")
             if distances is not None and pred_idx < len(distances):
                 overlay_lines.append(f"dist: {distances[pred_idx]:.4f}")
         resized_images[idx] = _draw_overlay(img, overlay_lines)
@@ -140,7 +140,7 @@ def build_prediction_image(images_paths, preds_correct, distances=None,
             overlay_lines = []
             gt_idx = idx - 1
             if gt_variances is not None and gt_idx < len(gt_variances):
-                overlay_lines.append(f"var: {gt_variances[gt_idx]:.4f}")
+                overlay_lines.append(f"unc: {gt_variances[gt_idx]:.4f}")
             if gt_distances is not None and gt_idx < len(gt_distances):
                 overlay_lines.append(f"dist: {gt_distances[gt_idx]:.4f}")
             gt_resized[idx] = _draw_overlay(gt_resized[idx], overlay_lines)
@@ -179,7 +179,7 @@ def save_file_with_paths(query_path, preds_paths, positives_paths, output_path, 
     file_content.append("Query path:")
     file_content.append(query_path)
     if query_variance is not None:
-        file_content.append(f"Query variance: {query_variance:.4f}")
+        file_content.append(f"Query uncertainty: {query_variance:.4f}")
     file_content.append("\nPredictions paths:")
     for i, p in enumerate(preds_paths):
         dist_str = f"  (dist: {distances[i]:.4f})" if distances is not None else ""

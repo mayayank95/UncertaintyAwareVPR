@@ -116,6 +116,7 @@ def compute_ece(
     output_dir: Optional[Path] = None,
     metrics: Optional[List[str]] = None,
     distances: Optional[np.ndarray] = None,
+    uncertainty_loss: str = "gaussian_nll",
 ) -> Dict:
     """Compute Expected Calibration Error for uncertainty-aware retrieval.
 
@@ -128,12 +129,20 @@ def compute_ece(
         output_dir: if provided, save ECE plot here.
         metrics: list of metrics to compute: 'recall', 'map', 'ap'. Default ['recall', 'map'].
         distances: [num_queries, max_k] L2 distances per prediction. Required for 'ap'.
+        uncertainty_loss: type of uncertainty loss used (e.g., 'gaussian_nll', 'vmf').
 
     Returns:
         dict with ece_recall, ece_map, ece_ap (when included), bin_*.
     """
     metrics = metrics or ["recall", "map"]
     mean_var = np.mean(query_variances, axis=-1)
+    
+    # For vMF, query_variances are concentration (kappa). 
+    # Large kappa = High confidence (Low uncertainty).
+    # We invert it to match the "higher value = higher uncertainty" logic of Gaussian variance.
+    if uncertainty_loss.lower() == "vmf":
+        mean_var = 1.0 / (mean_var + 1e-6)
+        
     bin_indices, zoom_k = _get_zoomed_bins(mean_var, num_bins)
     num_actual_bins = num_bins - 1
     num_queries = len(mean_var)
@@ -232,7 +241,7 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
         # Bin distribution
         ax = axs[idx // n_cols, idx % n_cols]
         ax.bar(range(num_bins), [len(b) for b in bin_indices])
-        ax.set_xlabel("σ² (uncertainty: low → high)")
+        ax.set_xlabel("Uncertainty (low → high)")
         ax.set_ylabel("Number of samples")
         idx += 1
 
@@ -242,7 +251,7 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
             ax.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             for i, n in enumerate(n_values):
                 ax.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
-            ax.set_xlabel("σ² (uncertainty: low → high)")
+            ax.set_xlabel("Uncertainty (low → high)")
             ax.set_ylabel("Recall@N (%)")
             ax.legend()
             idx += 1
@@ -253,7 +262,7 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
             ax.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             for i, n in enumerate(n_values):
                 ax.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
-            ax.set_xlabel("σ² (uncertainty: low → high)")
+            ax.set_xlabel("Uncertainty (low → high)")
             ax.set_ylabel("mAP@N (%)")
             ax.legend()
             idx += 1
@@ -263,7 +272,7 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
             ax = axs[idx // n_cols, idx % n_cols]
             ax.plot(perfect_x, np.array([1.0, 0.0]), "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             ax.plot(x, bin_ap, marker="o", label="AP")
-            ax.set_xlabel("σ² (uncertainty: low → high)")
+            ax.set_xlabel("Uncertainty (low → high)")
             ax.set_ylabel("AP")
             ax.legend()
             idx += 1
@@ -271,7 +280,7 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
         # Weights
         ax = axs[idx // n_cols, idx % n_cols]
         ax.bar(range(num_bins), bin_weights)
-        ax.set_xlabel("σ² (uncertainty: low → high)")
+        ax.set_xlabel("Uncertainty (low → high)")
         ax.set_ylabel("Bin weight (fraction of queries)")
         idx += 1
 
