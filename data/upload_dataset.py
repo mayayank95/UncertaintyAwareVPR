@@ -18,7 +18,7 @@ def unzip_folder(src: Path, dst: Path, data_type: List[str]):
             logger.debug(f"Skipping {zip_path.name} as it is not in the specified datasets_type.")
             continue    
         out_dir = dst / zip_path.stem  # folder named like the zip
-        logger.info(f"Unzipping {zip_path.name} -> {out_dir}")
+        logger.debug(f"Unzipping {zip_path.name} -> {out_dir}")
         with zipfile.ZipFile(zip_path, "r") as zf:
             for member in zf.infolist():
                 # avoid empty directories

@@ -50,10 +50,10 @@ class TrainDataset(torch.utils.data.Dataset):
         
         if os.path.exists(filename):
             if current_group == 0:
-                logger.info(f"Using cached dataset {filename}")
+                logger.debug(f"Using cached dataset {filename}")
             classes_per_group, self.images_per_class = torch.load(filename, weights_only=False)
         else:
-            logger.info(f"Cached dataset {filename} does not exist, I'll create it now.")
+            logger.debug(f"Cached dataset {filename} does not exist, I'll create it now.")
             classes_per_group, self.images_per_class = self.initialize(dataset_folder, M, N, alpha, L, min_images_per_class)
             if not args['dry_run']:
                 os.makedirs(os.path.dirname(filename), exist_ok=True)

@@ -291,6 +291,6 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
         plt.tight_layout()
         plt.savefig(Path(output_dir) / "ece_plot.png", dpi=150)
         plt.close()
-        logger.info(f"ECE plot saved to {output_dir}/ece_plot.png")
+        logger.debug(f"ECE plot saved to {output_dir}/ece_plot.png")
     except ImportError:
         logger.warning("matplotlib not installed, skipping ECE plot.")

@@ -84,7 +84,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             db_subset, batch_size=args['infer_batch_size'], 
             num_workers=args['num_workers'], pin_memory=(device.type == "cuda")
         )
-        logger.info("Extracting database features...")
+        logger.debug("Extracting database features...")
         for images, indices in tqdm(db_loader):
             desc, var = model(images.to(device))
             all_descriptors[indices.numpy(), :] = desc.cpu().numpy()
@@ -97,7 +97,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             q_subset, batch_size=1, 
             num_workers=args['num_workers'], pin_memory=(device.type == "cuda")
         )
-        logger.info("Extracting query features...")
+        logger.debug("Extracting query features...")
         for images, indices in tqdm(q_loader):
             desc, var = model(images.to(device))
             all_descriptors[indices.numpy(), :] = desc.cpu().numpy()

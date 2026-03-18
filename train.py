@@ -55,7 +55,7 @@ def train(args, model, device, dataset_name, datasets_dir):
     model_lr = (args.get("head_lr") if args.get("head_lr") is not None else 1e-3) if args.get("freeze_model") else args["lr"]
     model_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=model_lr)
     opt_param_names = [n for n, p in model.named_parameters() if p.requires_grad]
-    logger.info(f"Optimizer (model): lr={model_lr}, params ({len(opt_param_names)}): {opt_param_names}")
+    logger.debug(f"Optimizer (model): lr={model_lr}, params ({len(opt_param_names)}): {opt_param_names}")
     if args.get("freeze_model"):
         n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         logger.info(f"freeze_model: training {n_trainable} params (backbone/aggregation frozen)")
@@ -70,9 +70,9 @@ def train(args, model, device, dataset_name, datasets_dir):
     classifiers = [cosface_loss.MarginCosineProduct(args['descriptors_dimension'], len(group)) for group in groups]
     classifiers_optimizers = [torch.optim.Adam(classifier.parameters(), lr=args['classifiers_lr']) for classifier in classifiers]
 
-    logger.info(f"Using {len(groups)} groups")
-    logger.info(f"The {len(groups)} groups have respectively the following number of classes {[len(g) for g in groups]}")
-    logger.info(f"The {len(groups)} groups have respectively the following number of images {[g.get_images_num() for g in groups]}")
+    logger.debug(f"Using {len(groups)} groups")
+    logger.debug(f"The {len(groups)} groups have respectively the following number of classes {[len(g) for g in groups]}")
+    logger.debug(f"The {len(groups)} groups have respectively the following number of images {[g.get_images_num() for g in groups]}")
 
     val_ds = TestDataset(f"{val_set_folder}/database", f"{val_set_folder}/queries", args['positive_dist_threshold'], args.get('image_size'), use_labels=True)
     logger.info(f"Validation set: {val_ds}")
@@ -197,7 +197,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                     for n, p in root.var_head.named_parameters():
                         g = p.grad.norm().item() if p.grad is not None else 0.0
                         norms.append(f"{n}={g:.6f}")
-                    logger.info(f"[debug_var_head_grad] epoch {epoch_num} first batch var_head grad norms: {norms}")
+                    logger.debug(f"[debug_var_head_grad] epoch {epoch_num} first batch var_head grad norms: {norms}")
             model_optimizer.step()
             if classifiers_optimizers[current_group_num] is not None:
                 classifiers_optimizers[current_group_num].step()
@@ -289,9 +289,9 @@ if __name__ == "__main__":
     commons.setup_cudnn(cfg["cudnn_benchmark"])
     device, model = init_model(cfg)
 
-    logger.info(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
+    logger.debug(f"There are {torch.cuda.device_count()} GPUs and {multiprocessing.cpu_count()} CPUs.")
     if torch.cuda.is_available():
-        logger.info(f"GPU type: {torch.cuda.get_device_name(0)}")
+        logger.debug(f"GPU type: {torch.cuda.get_device_name(0)}")
 
     # Optionally copy the resume model into the current log directory
     commons.copy_resume_model_to_log_dir(cfg, logger)

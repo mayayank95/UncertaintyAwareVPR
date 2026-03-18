@@ -78,6 +78,6 @@ def copy_resume_model_to_log_dir(cfg, logger: logging.Logger):
 
     try:
         shutil.copy(src, log_dir)
-        logger.info(f"Copied resume model from {src} to {log_dir}")
+        logger.debug(f"Copied resume model from {src} to {log_dir}")
     except Exception as e:
         logger.error(f"Failed to copy resume model from {src} to {log_dir}: {e}")

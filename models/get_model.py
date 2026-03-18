@@ -59,6 +59,6 @@ def get_model(args: Dict[str, Any]) -> torch.nn.Module:
         if not trainable:
             raise ValueError("--freeze_model: no trainable parameters remain. Nothing to train.")
         trainable_names = [n for n, p in model.named_parameters() if p.requires_grad]
-        logger.info(f"Base model frozen, training {len(trainable)} params: {trainable_names}")
+        logger.debug(f"Base model frozen, training {len(trainable)} params: {trainable_names}")
 
     return model

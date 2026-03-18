@@ -111,7 +111,7 @@ def parse_args() -> argparse.Namespace:
                    help="Metric for early stopping: recall (maximize R@1) or val_gnll (minimize validation uncertainty loss)")
     p.add_argument("--debug_var_head_grad", action="store_true",
                    help="Log var_head gradient norms after backward (one line per epoch) to verify gradients flow")
-    p.add_argument("--ece_metrics", type=str, default="recall,map,ap",
+    p.add_argument("--ece_metrics", type=str, default="recall",
                    help="ECE metrics to compute: comma-separated, e.g. 'recall,map' or 'recall,map,ap'")
 
     return p.parse_args()
@@ -260,12 +260,12 @@ def _log_config_summary(cfg: Dict[str, Any], entries: List[Dict[str, Any]], cfg_
     logger.debug(f"colab: {cfg['colab']}, dry_run: {cfg['dry_run']}")
     if cfg["colab"]:
         logger.debug(f"local_data_folder: {cfg['local_data_folder']}")
-    logger.info(f"entries to process: {[e.get('name') for e in entries]}")
-    logger.info(f"Using device: {cfg['device']}")
-    logger.info(f"method: {cfg.get('method')}, backbone: {cfg.get('backbone')}, "
+    logger.debug(f"entries to process: {[e.get('name') for e in entries]}")
+    logger.debug(f"Using device: {cfg['device']}")
+    logger.debug(f"method: {cfg.get('method')}, backbone: {cfg.get('backbone')}, "
                 f"descriptors_dimension: {cfg.get('descriptors_dimension')}")
     if cfg.get('image_size') is not None:
-        logger.info(f"image_size: {cfg['image_size']}")
+        logger.debug(f"image_size: {cfg['image_size']}")
     if cfg.get("resume_train") is not None:
         logger.info(f"resume_train: {cfg['resume_train']}")
 

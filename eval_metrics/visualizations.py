@@ -214,7 +214,7 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
 
     viz_dir = Path(f"{log_dir}/preds")
     viz_dir.mkdir(exist_ok=True)
-    logger.info(f"Saving predictions in {viz_dir}")
+    logger.debug(f"Saving predictions in {viz_dir}")
     for query_index, preds in enumerate(tqdm(predictions[:num_preds_to_viz], desc="Saving preds")):
         query_path = eval_ds.queries_paths[query_index]
         list_of_images_paths = [query_path]

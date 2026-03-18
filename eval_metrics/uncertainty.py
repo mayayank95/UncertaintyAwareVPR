@@ -24,7 +24,7 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
     """
     uncertainty_corr = 0.0
     if args["model_mode"] == "uncertainty" and args["use_labels"]:
-        logger.info("Computing uncertainty correlation metrics...")
+        logger.debug("Computing uncertainty correlation metrics...")
         loss_type = args.get('uncertainty_loss', 'gaussian_nll').lower()
         
         if positives_per_query is None:
@@ -91,7 +91,7 @@ def compute_uncertainty_correlation(args, all_descriptors, all_variances, positi
                     save_path = out_path / 'uncertainty_correlation_scatter.png'
                     plt.savefig(save_path, dpi=150)
                     plt.close(fig)
-                    logger.info(f"Uncertainty correlation scatter plot saved to {save_path}")
+                    logger.debug(f"Uncertainty correlation scatter plot saved to {save_path}")
                 except ImportError:
                     logger.warning("matplotlib not installed, skipping uncertainty correlation scatter plot.")
 
@@ -137,7 +137,7 @@ def plot_variance_distribution(all_variances, output_dir, num_database=None):
         plt.tight_layout()
         plt.savefig(out_path / "variance_distribution.png", dpi=150)
         plt.close()
-        logger.info(f"Variance distribution plot saved to {out_path / 'variance_distribution.png'}")
+        logger.debug(f"Variance distribution plot saved to {out_path / 'variance_distribution.png'}")
     except ImportError:
         logger.warning("matplotlib not installed, skipping variance distribution plot.")
 
