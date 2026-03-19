@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--logs_folder", type=str, default=None, help="Folder to save logs")
     p.add_argument("--colab", action="store_true", help="Run in Google Colab mode")
     p.add_argument("--dry_run", action="store_true", help="Print actions without performing file operations")
+    p.add_argument("--debug", action="store_true", help="Enable extra debug-only checks and computations.")
     p.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
     p.add_argument("--wandb_project", type=str, default="UncertaintyAwareVPR", help="W&B project name")
     p.add_argument("--wandb_run_name", type=str, default=None, help="W&B run name (default: auto from define function in runtime.py)")
@@ -95,6 +96,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma_dim", type=int, default=None, help="Dimension of the variance output vector")
     p.add_argument("--uncertainty_lambda", type=float, default=1.0, help="Weight for the uncertainty loss")
     p.add_argument("--uncertainty_loss", type=str, default=None, help="Uncertainty loss type: gaussian_nll, gaussian_cosine, or vmf")
+    p.add_argument(
+        "--gnll_mu_scale_mode",
+        type=str,
+        default="sqrt_dim",
+        choices=["sqrt_dim", "none", "custom"],
+        help="Scaling mode for Gaussian NLL mean vectors: sqrt_dim (default), none (1.0), or custom (use --gnll_mu_scale_value).",
+    )
+    p.add_argument(
+        "--gnll_mu_scale_value",
+        type=float,
+        default=1.0,
+        help="Custom scale value for Gaussian NLL mean vectors when --gnll_mu_scale_mode=custom.",
+    )
     p.add_argument("--var_head_type", type=str, default="linear",
                    choices=["activation", "linear", "mlp", "separate_agg", "separate_linear_agg", "vmf", "vmf_agg"],
                    help="Variance head type: 'activation' (bare activation, no trainable params), "

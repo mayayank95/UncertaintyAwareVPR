@@ -108,7 +108,7 @@ def train(args, model, device, dataset_name, datasets_dir):
 
     early_stop_metric = args.get("early_stop_metric", "recall")
     best_val_ece_recall_01 = float("inf")
-    if args.get('resume_train') or args.get('resume_model'):
+    if (args.get('resume_train') or args.get('resume_model')) and args.get("debug"):
         logger.info("Verifying resumed model performance (before any training)...")
         init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, log_dataset_info=False,
@@ -124,6 +124,8 @@ def train(args, model, device, dataset_name, datasets_dir):
                 best_val_ece_recall_01 = float(init_ece_val)
                 ece_part = f", ece_recall_01={best_val_ece_recall_01:.4f}"
         logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}{_map}, mean_var={_mv}, max_var={_xv}{ece_part}")
+    elif args.get('resume_train') or args.get('resume_model'):
+        logger.debug("Skipping pre-training resume verification (enable --debug to run it).")
 
     # ---- Training loop ----
     logger.info("Start training ...")
@@ -191,6 +193,8 @@ def train(args, model, device, dataset_name, datasets_dir):
                     mu_norm, target_vectors, variance,
                     loss_type=args.get('uncertainty_loss', 'gaussian_nll'),
                     lambda_=uncertainty_lambda,
+                    gnll_mu_scale_mode=args.get("gnll_mu_scale_mode", "sqrt_dim"),
+                    gnll_mu_scale_value=args.get("gnll_mu_scale_value", 1.0),
                 )
                 loss = loss + loss_uncertainty
                 epoch_losses_gnll.append(loss_uncertainty.item())

@@ -13,6 +13,8 @@ def compute_uncertainty_loss(
     variance: torch.Tensor,
     loss_type: str = "gaussian_nll",
     lambda_: float = 1.0,
+    gnll_mu_scale_mode: str = "sqrt_dim",
+    gnll_mu_scale_value: float = 1.0,
 ) -> torch.Tensor:
     """
     Uncertainty loss used by both training and validation.
@@ -23,6 +25,8 @@ def compute_uncertainty_loss(
         variance: Predicted variance [N, D].
         loss_type: 'gaussian_nll', 'gaussian_cosine', or 'vmf'.
         lambda_: Scale factor applied to the loss.
+        gnll_mu_scale_mode: GNLL scaling mode for mean vectors: sqrt_dim, none, custom.
+        gnll_mu_scale_value: Custom GNLL scale when mode=custom.
 
     Returns:
         Tensor scalar: lambda_ * mean loss (use .backward() in train, .item() in val).
@@ -37,7 +41,13 @@ def compute_uncertainty_loss(
         loss = criterion(input_norm, kappa, target_norm)
     else:
         criterion = torch.nn.GaussianNLLLoss()
-        scale = math.sqrt(input_norm.shape[1])
+        mode = str(gnll_mu_scale_mode).lower()
+        if mode == "none":
+            scale = 1.0
+        elif mode == "custom":
+            scale = float(gnll_mu_scale_value)
+        else:
+            scale = math.sqrt(input_norm.shape[1])
         loss = criterion(input_norm * scale, target_norm * scale, variance)
     return lambda_ * loss
 

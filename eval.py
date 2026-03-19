@@ -37,6 +37,8 @@ def _compute_val_gnll(args, all_descriptors, all_variances, positives_per_query,
         q_norm, db_norm, qv,
         loss_type=args.get("uncertainty_loss", "gaussian_nll"),
         lambda_=args.get("uncertainty_lambda", 1.0),
+        gnll_mu_scale_mode=args.get("gnll_mu_scale_mode", "sqrt_dim"),
+        gnll_mu_scale_value=args.get("gnll_mu_scale_value", 1.0),
     )
     return loss.item()
 
