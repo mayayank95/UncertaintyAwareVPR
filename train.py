@@ -107,17 +107,23 @@ def train(args, model, device, dataset_name, datasets_dir):
         best_val_recall1 = start_epoch_num = 0
 
     early_stop_metric = args.get("early_stop_metric", "recall")
-    best_val_gnll = float("inf")
+    best_val_ece_recall_01 = float("inf")
     if args.get('resume_train') or args.get('resume_model'):
         logger.info("Verifying resumed model performance (before any training)...")
-        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, _, _, init_val_gnll = eval_dataset(
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, log_dataset_info=False,
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
         _xv = f"{init_max_var:.4f}" if init_max_var is not None else "N/A"
-        _gnll = f", val_gnll={init_val_gnll:.4f}" if init_val_gnll is not None else ""
         _map = f", mAP@1={init_map_at_k[0]:.2f}" if init_map_at_k is not None else ""
-        logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}{_map}, mean_var={_mv}, max_var={_xv}{_gnll}")
+        ece_part = ""
+        if early_stop_metric == "ece_recall":
+            init_ece_key = f"Eval_{dataset_name}/ece_recall_01"
+            init_ece_val = init_eval_wandb_metrics.get(init_ece_key) if init_eval_wandb_metrics else None
+            if init_ece_val is not None:
+                best_val_ece_recall_01 = float(init_ece_val)
+                ece_part = f", ece_recall_01={best_val_ece_recall_01:.4f}"
+        logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}{_map}, mean_var={_mv}, max_var={_xv}{ece_part}")
 
     # ---- Training loop ----
     logger.info("Start training ...")
@@ -236,15 +242,25 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_gnll = eval_dataset(
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False,
         )
-        if early_stop_metric == "val_gnll" and val_gnll is not None:
-            is_best = val_gnll < best_val_gnll
-            best_val_gnll = min(val_gnll, best_val_gnll)
+        # Always track best recall@1 for metrics/checkpoint metadata.
+        is_recall_best = recalls[0] > best_val_recall1
+        best_val_recall1 = max(recalls[0], best_val_recall1)
+
+        if early_stop_metric == "ece_recall":
+            ece_val = eval_wandb_metrics.get("ece/recall_01") if eval_wandb_metrics else None
+            if ece_val is not None:
+                ece_val_f = float(ece_val)
+                is_best = ece_val_f < best_val_ece_recall_01
+                best_val_ece_recall_01 = min(ece_val_f, best_val_ece_recall_01)
+            else:
+                logger.debug("ECE recall@1 missing; falling back early-stop to recall.")
+                is_best = is_recall_best
         else:
-            is_best = recalls[0] > best_val_recall1
-            best_val_recall1 = max(recalls[0], best_val_recall1)
+            # Default: early stop on recall@1 improvements.
+            is_best = is_recall_best
 
         wandb_utils.log_train_epoch(
             args, epoch_num, recalls, map_at_k, best_val_recall1, active_losses,
