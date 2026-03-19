@@ -118,6 +118,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--debug_var_head_grad", action="store_true",
                    help="Log var_head gradient norms after backward (one line per epoch) to verify gradients flow")
+    p.add_argument(
+        "--freeze_batchnorm",
+        action="store_true",
+        help="Freeze BatchNorm layers (set to eval mode) during training to keep running stats fixed.",
+    )
     p.add_argument("--ece_metrics", type=str, default="recall",
                    help="ECE metrics to compute: comma-separated, e.g. 'recall,map' or 'recall,map,ap'")
 

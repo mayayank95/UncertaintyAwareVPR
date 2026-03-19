@@ -151,10 +151,11 @@ def train(args, model, device, dataset_name, datasets_dir):
 
         dataloader_iterator = iter(dataloader)
         model = model.train()
-        for m in model.modules():
-            if isinstance(m, torch.nn.BatchNorm2d):
-                m.eval() # Freeze BN statistics
-        logger.debug("BatchNorm2d layers frozen")
+        if args.get("freeze_batchnorm"):
+            for m in model.modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.eval()  # Freeze BN statistics
+            logger.info("BatchNorm2d layers frozen (flag enabled)")
         epoch_losses = []
         epoch_losses_ce = []
         epoch_losses_gnll = []
