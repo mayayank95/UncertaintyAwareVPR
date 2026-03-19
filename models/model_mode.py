@@ -93,6 +93,16 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
             nn.Linear(fc_output_dim, 1),
             activation,
         )
+    elif var_type == "vmf_agg":
+        assert aggregation is not None, "vmf_agg requires the aggregation module"
+        agg_copy = copy.deepcopy(aggregation)
+        # The aggregation produces a descriptor of size fc_output_dim; we then predict kappa in [1] via Linear.
+        head = nn.Sequential(
+            agg_copy,
+            nn.Linear(fc_output_dim, 1),
+            activation,
+        )
+        needs_feature_map = True
     else:
         raise ValueError(f"Unknown var_head_type: {var_type}")
 
@@ -148,7 +158,7 @@ if __name__ == '__main__':
 
     # 1) Init check: var_init=True => mean variance ~0.1 for linear, mlp, separate_agg
     print("\n--- Variance head init (var_init=True => mean variance ~0.1) ---")
-    for vtype in ("activation", "linear", "mlp", "separate_agg"):
+    for vtype in ("activation", "linear", "mlp", "separate_agg", "vmf_agg"):
         # activation has no trainable params so var_init is N/A; others use var_init=True
         use_init = vtype != "activation"
         opt = {**default_opt, "var_head_type": vtype, "var_init": use_init}
