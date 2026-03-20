@@ -290,5 +290,49 @@ if __name__ == "__main__":
             cfg, name, recalls, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images
         )
 
+        # Populate W&B Summary for this dataset with the key scalar metrics.
+        if cfg.get("use_wandb"):
+            try:
+                import wandb as _wandb
+                if _wandb.run is not None:
+                    prefix = f"Eval_{name}"
+                    rv = cfg.get("recall_values", [1, 5, 10, 20])
+                    for k in sorted(rv):
+                        i = rv.index(k)
+                        _wandb.run.summary[f"{prefix}/recall_{k:02d}"] = float(recalls[i]) if i < len(recalls) else 0.0
+                        if map_at_k is not None and i < len(map_at_k):
+                            _wandb.run.summary[f"{prefix}/map_{k:02d}"] = float(map_at_k[i])
+                        elif map_at_k is not None:
+                            _wandb.run.summary[f"{prefix}/map_{k:02d}"] = 0.0
+
+                    # ECE values (already computed inside eval_dataset)
+                    for k in sorted(rv):
+                        k2 = f"{k:02d}"
+                        ecr_key = f"{prefix}/ece_recall_{k2}"
+                        if ecr_key in eval_wb:
+                            _wandb.run.summary[ecr_key] = float(eval_wb[ecr_key])
+                        ecm_key = f"{prefix}/ece_map_{k2}"
+                        if ecm_key in eval_wb:
+                            _wandb.run.summary[ecm_key] = float(eval_wb[ecm_key])
+
+                    eap_key = f"{prefix}/ece_ap"
+                    if eap_key in eval_wb:
+                        _wandb.run.summary[eap_key] = float(eval_wb[eap_key])
+
+                    # Variance statistics (passed separately from eval_dataset)
+                    if corr is not None:
+                        _wandb.run.summary[f"{prefix}/uncertainty_correlation"] = float(corr)
+                    if mean_var is not None:
+                        _wandb.run.summary[f"{prefix}/variance_mean"] = float(mean_var)
+                    if std_var is not None:
+                        _wandb.run.summary[f"{prefix}/variance_std"] = float(std_var)
+                    if min_var is not None:
+                        _wandb.run.summary[f"{prefix}/variance_min"] = float(min_var)
+                    if max_var is not None:
+                        _wandb.run.summary[f"{prefix}/variance_max"] = float(max_var)
+            except Exception:
+                # Best-effort only; don't fail evaluation due to summary writing.
+                pass
+
     logger.info("=" * 30 + "\nAll processes finished.")
     wandb_utils.finish_run(cfg)
