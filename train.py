@@ -138,6 +138,11 @@ def train(args, model, device, dataset_name, datasets_dir):
     not_improved_count = 0
 
     mean_variances_history = []
+    best_model_epoch = None
+    best_variance_mean = None
+    best_variance_std = None
+    best_variance_min = None
+    best_variance_max = None
     for epoch_num in range(start_epoch_num, args['epochs_num']):
         
         # ---- Train ----
@@ -276,6 +281,12 @@ def train(args, model, device, dataset_name, datasets_dir):
 
         if is_best:
             not_improved_count = 0
+            best_model_epoch = epoch_num
+            if epoch_variances:
+                best_variance_mean = float(np.mean(epoch_variances))
+                best_variance_std = float(np.std(epoch_variances))
+                best_variance_min = float(np.min(epoch_variances))
+                best_variance_max = float(np.max(epoch_variances))
         else:
             not_improved_count += 1
             if not_improved_count >= patience:
@@ -298,6 +309,28 @@ def train(args, model, device, dataset_name, datasets_dir):
 
     if mean_variances_history:
         logger.info(f"Mean variance evolution: start={mean_variances_history[0]:.4f}, end={mean_variances_history[-1]:.4f}")
+
+    # Populate W&B Summary panel with best-model metadata (not just time-series history).
+    if wandb_utils and args.get("use_wandb"):
+        try:
+            import wandb as _wandb
+            if _wandb.run is not None:
+                _wandb.run.summary["best_model_epoch"] = best_model_epoch
+                _wandb.run.summary["best_val_recall_01"] = float(best_val_recall1)
+                if best_variance_mean is not None:
+                    _wandb.run.summary["best_variance_mean"] = float(best_variance_mean)
+                    _wandb.run.summary["best_variance_std"] = float(best_variance_std)
+                    _wandb.run.summary["best_variance_min"] = float(best_variance_min)
+                    _wandb.run.summary["best_variance_max"] = float(best_variance_max)
+                if early_stop_metric == "ece_recall":
+                    if best_val_ece_recall_01 != float("inf"):
+                        _wandb.run.summary["best_ece_recall_01"] = float(best_val_ece_recall_01)
+                    else:
+                        _wandb.run.summary["best_ece_recall_01"] = None
+                _wandb.run.summary["early_stop_metric"] = str(early_stop_metric)
+        except Exception:
+            # Summary is best-effort; do not fail training due to logging.
+            pass
 
     logger.info(f"Trained for {epoch_num+1:02d} epochs, in total in {str(datetime.now() - start_time)[:-7]}")
     logger.info("Experiment finished (without any errors)")
