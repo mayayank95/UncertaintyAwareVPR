@@ -127,14 +127,14 @@ def compute_ece(
         n_values: recall@N values to evaluate.
         num_bins: number of bin edges (actual bins = num_bins - 1).
         output_dir: if provided, save ECE plot here.
-        metrics: list of metrics to compute: 'recall', 'map', 'ap'. Default ['recall', 'map'].
+        metrics: list of metrics to compute: 'recall', 'map', 'ap'. Default ['recall'].
         distances: [num_queries, max_k] L2 distances per prediction. Required for 'ap'.
         uncertainty_loss: type of uncertainty loss used (e.g., 'gaussian_nll', 'vmf').
 
     Returns:
         dict with ece_recall, ece_map, ece_ap (when included), bin_*.
     """
-    metrics = metrics or ["recall", "map"]
+    metrics = metrics or ["recall"]
     mean_var = np.mean(query_variances, axis=-1)
     
     # For vMF, query_variances are concentration (kappa). 

@@ -173,7 +173,10 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             q_variances = all_variances[test_ds.num_database:]
             if args['dry_run']:
                 q_variances = q_variances[:max(1, args.get('num_queries_to_save', 3))]
-            ece_metrics = args.get('ece_metrics') or ['recall', 'map']
+            # Respect --ece_metrics only (default from parser is recall-only).
+            ece_metrics = args.get("ece_metrics")
+            if not ece_metrics:
+                ece_metrics = ["recall"]
             save_ece_plot = not args['dry_run'] or args.get('use_wandb')
             if save_ece_plot:
                 dataset_output_dir.mkdir(parents=True, exist_ok=True)

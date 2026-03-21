@@ -137,8 +137,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Freeze BatchNorm layers (set to eval mode) during training to keep running stats fixed.",
     )
-    p.add_argument("--ece_metrics", type=str, default="recall",
-                   help="ECE metrics to compute: comma-separated, e.g. 'recall,map' or 'recall,map,ap'")
+    p.add_argument(
+        "--ece_metrics",
+        type=str,
+        default="recall",
+        help="ECE metrics to compute (comma-separated). Default: recall only. "
+             "Add map and/or ap as needed, e.g. 'recall,map' or 'recall,map,ap'.",
+    )
 
     return p.parse_args()
     
@@ -185,7 +190,7 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
     if "ece_metrics" in out and out["ece_metrics"] is not None:
         v = out["ece_metrics"]
         if isinstance(v, list):
-            pass
+            out["ece_metrics"] = [str(x).strip().lower() for x in v if str(x).strip()]
         else:
             out["ece_metrics"] = [s.strip().lower() for s in str(v).split(",") if s.strip()]
 
