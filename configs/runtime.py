@@ -32,23 +32,46 @@ def init_model(args: Dict[str, Any]):
     return device, model
 
 
+def _normalize_losses_for_name(losses: Any) -> list:
+    """Parse losses into lowercase tokens (e.g. ['ce', 'uncertainty'])."""
+    if losses is None:
+        return ["ce"]
+    if isinstance(losses, list):
+        return [str(x).strip().lower() for x in losses if str(x).strip()]
+    s = str(losses).strip().lower()
+    if not s:
+        return ["ce"]
+    return [x.strip() for x in s.replace(" ", "").split(",") if x.strip()]
+
+
+_UNCERTAINTY_LOSS_NAME_SHORT = {
+    "gaussian_nll": "gnll",
+    "gaussian_cosine": "gcos",
+    "vmf": "vmf",
+}
+
+
+def _uncertainty_loss_tag(uncertainty_loss: str) -> str:
+    key = str(uncertainty_loss or "gaussian_nll").strip().lower().replace(" ", "_")
+    return _UNCERTAINTY_LOSS_NAME_SHORT.get(key, key)
+
+
 def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
     """Build default run name from job_type, var_head, losses and optional flags."""
-    losses = args.get("losses") or "ce"
-    if isinstance(losses, list):
-        losses_str = "_".join(str(l).strip() for l in losses) if losses else "ce"
-    else:
-        losses_str = str(losses).replace(",", "_").replace(" ", "").strip() or "ce"
-    
+    loss_tokens = _normalize_losses_for_name(args.get("losses"))
+
     parts = [job_type]
-    
+
     # var_head (only if uncertainty mode is enabled)
     if args.get("model_mode") == "uncertainty":
         vht = args.get("var_head_type", "linear")
         parts.append(vht)
-    
-    # loss
-    parts.append(losses_str)
+
+    # Loss tags: "ce" if cross-entropy is active; uncertainty loss type if uncertainty is active
+    if "ce" in loss_tokens:
+        parts.append("ce")
+    if "uncertainty" in loss_tokens:
+        parts.append(_uncertainty_loss_tag(args.get("uncertainty_loss", "gaussian_nll")))
     
     # if init_var flag on
     if args.get("var_init"):
@@ -57,9 +80,7 @@ def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
     if args.get("load_classifiers"):
         parts.append("load_clf")
     if args.get("freeze_model"):
-        parts.append("freeze")
-    if args.get("resume_model"):
-        parts.append("resume_model")
+        parts.append("freeze_model")
     if args.get("resume_train"):
         parts.append("resume_train")
 
