@@ -93,15 +93,13 @@ def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
     if args.get("resume_train"):
         parts.append("resume_train")
 
-    # Add GNLL mean scaling setup for reproducibility in run names.
-    gnll_mode = str(args.get("gnll_mu_scale_mode", "sqrt_dim"))
+    # GNLL mean scaling: omit from name when default (sqrt_dim); tag only non-default modes.
+    gnll_mode = str(args.get("gnll_mu_scale_mode", "sqrt_dim")).lower()
     if gnll_mode == "custom":
         gnll_val = args.get("gnll_mu_scale_value", 1.0)
-        parts.append(f"gnllmu_custom{gnll_val}")
+        parts.append(f"gnll_mu_custom{gnll_val}")
     elif gnll_mode == "none":
-        parts.append("gnllmu_none")
-    else:
-        parts.append("gnllmu_sqrtdim")
+        parts.append("gnll_mu_none")
 
     # Add BN freeze tag only when the flag is enabled.
     if args.get("freeze_batchnorm"):
