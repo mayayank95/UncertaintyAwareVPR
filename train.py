@@ -96,6 +96,17 @@ def train(args, model, device, dataset_name, datasets_dir):
     early_stop_best_epochs: dict = {m: None for m in early_stop_metrics}
     not_improved_counts: dict = {m: 0 for m in early_stop_metrics}
 
+    # Phased early stopping: Phase 1 = recall only, Phase 2 = ECE metrics only.
+    phased = args.get("phased_early_stop", False) and "recall" in early_stop_metrics
+    if phased:
+        phase2_metrics = [m for m in early_stop_metrics if m.startswith("ece_")]
+        active_phase_metrics = ["recall"]
+        ece_phase_started = False
+        logger.info(f"Phased early stop enabled: Phase 1 = recall, Phase 2 = {phase2_metrics}")
+    else:
+        active_phase_metrics = list(early_stop_metrics)
+        ece_phase_started = True  # treat as already in final phase (no transition needed)
+
     # ---- Resume from checkpoint ----
     if args.get('resume_train') is not None:
         (
@@ -124,12 +135,10 @@ def train(args, model, device, dataset_name, datasets_dir):
     else:
         best_val_recall1 = start_epoch_num = 0
 
-    _warned_val_u = False
     if (args.get('resume_train') or args.get('resume_model')) and args.get("debug"):
         logger.info("Verifying resumed model performance (before any training)...")
-        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, init_val_loss = eval_dataset(
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=0, log_dataset_info=False,
-            classifiers=classifiers, groups=groups,
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
         _xv = f"{init_max_var:.4f}" if init_max_var is not None else "N/A"
@@ -142,7 +151,6 @@ def train(args, model, device, dataset_name, datasets_dir):
                 recall_values=args["recall_values"],
                 eval_wandb_metrics=init_eval_wandb_metrics,
                 dataset_name=dataset_name,
-                val_loss=init_val_loss,
             )
             if v is not None:
                 early_stop_best_values[m] = float(v)
@@ -276,23 +284,19 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_loss = eval_dataset(
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False,
-            classifiers=classifiers, groups=groups,
         )
         # Track best recall@1 unconditionally for checkpoint metadata / W&B display.
         best_val_recall1 = max(recalls[0], best_val_recall1)
 
-        if "val_loss" in early_stop_metrics and val_loss is None and not _warned_val_u:
-            logger.warning(
-                "early_stop includes val_loss but validation total loss is None "
-                "(need use_labels; ce and/or uncertainty in losses; for ce need queries in current CosPlace group; for uncertainty need model_mode=uncertainty)."
-            )
-            _warned_val_u = True
-
         improved: dict = {}
         rv = args["recall_values"]
         for m in early_stop_metrics:
+            # Skip metrics not in the active phase
+            if m not in active_phase_metrics:
+                improved[m] = False
+                continue
             if not_improved_counts[m] >= patience:
                 improved[m] = False
                 continue
@@ -302,7 +306,6 @@ def train(args, model, device, dataset_name, datasets_dir):
                 recall_values=rv,
                 eval_wandb_metrics=eval_wandb_metrics,
                 dataset_name=dataset_name,
-                val_loss=val_loss,
             )
             if cur is None:
                 improved[m] = False
@@ -356,11 +359,30 @@ def train(args, model, device, dataset_name, datasets_dir):
                 files = [early_stop_utils.best_model_filename(m, early_stop_metrics) for m in saved]
                 logger.info(f"Saved best checkpoint(s): {list(zip(saved, files))}")
 
-        # Early stop: all metrics must have exhausted their patience.
-        exhausted = [m for m in early_stop_metrics if not_improved_counts[m] >= patience]
-        if len(exhausted) == len(early_stop_metrics):
+        # ---- Phased early stop: transition from recall → ECE ----
+        if phased and not ece_phase_started and not_improved_counts.get("recall", 0) >= patience:
+            ece_phase_started = True
+            active_phase_metrics = phase2_metrics
+            # Seed ECE best values from current epoch and reset patience counters.
+            for m in phase2_metrics:
+                cur = early_stop_utils.get_metric_value(
+                    m, recalls=recalls, recall_values=rv,
+                    eval_wandb_metrics=eval_wandb_metrics, dataset_name=dataset_name,
+                )
+                if cur is not None:
+                    early_stop_best_values[m] = float(cur)
+                not_improved_counts[m] = 0
             logger.info(
-                f"Early stopping: all {len(early_stop_metrics)} metric(s) exhausted patience={patience}. "
+                f"Phased early stop: recall plateaued at epoch {epoch_num} "
+                f"(best R@1={early_stop_best_values.get('recall', 0):.1f} at epoch {early_stop_best_epochs.get('recall')}). "
+                f"Activating Phase 2 ECE metrics: {phase2_metrics} with fresh patience={patience}."
+            )
+
+        # Early stop: all *active* metrics must have exhausted their patience.
+        exhausted = [m for m in active_phase_metrics if not_improved_counts[m] >= patience]
+        if ece_phase_started and len(exhausted) == len(active_phase_metrics):
+            logger.info(
+                f"Early stopping: all {len(active_phase_metrics)} active metric(s) exhausted patience={patience}. "
                 f"Last improvement epochs: {early_stop_best_epochs}"
             )
             break
@@ -404,13 +426,14 @@ def train(args, model, device, dataset_name, datasets_dir):
             f"early_stop_metrics={early_stop_metrics}",
         ]
         for m in early_stop_metrics:
-            if m != "recall":
-                bv = early_stop_best_values.get(m)
-                if bv is not None and bv != float("inf"):
-                    parts.append(f"best_{m}={bv:.4f}")
+            bv = early_stop_best_values.get(m)
             be = early_stop_best_epochs.get(m)
-            if be is not None:
-                parts.append(f"best_epoch_{m}={be}")
+            if m == "recall":
+                parts.append(f"best_epoch_{m}={be if be is not None else 'N/A'}")
+            else:
+                bv_str = f"{bv:.4f}" if bv is not None and bv != float("inf") else "N/A"
+                parts.append(f"best_{m}={bv_str}")
+                parts.append(f"best_epoch_{m}={be if be is not None else 'N/A'}")
         logger.info("Best model summary: " + ", ".join(parts))
     else:
         logger.info("Best model summary: no best_model_epoch set (no improvement vs initial metric).")

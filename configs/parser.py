@@ -129,10 +129,16 @@ def parse_args() -> argparse.Namespace:
         "--early_stop_metric",
         type=str,
         default="recall",
-        help="Early-stop metrics separated by commas (,). Example: recall,ece_recall,val_loss. "
-        "Tokens: recall; ece_recall (R@1 ECE); ece_recall_05; ece_recall_10; "
-        "val_loss (min total val loss = val CE + val uncertainty when both in losses). "
+        help="Early-stop metrics separated by commas (,). Example: recall,ece_recall. "
+        "Tokens: recall; ece_recall (R@1 ECE); ece_recall_05; ece_recall_10. "
         "Each metric has its own patience counter; each saves best_model_<metric>.pth (best_model.pth when only recall).",
+    )
+    p.add_argument(
+        "--phased_early_stop",
+        action="store_true",
+        help="Two-phase early stopping: Phase 1 tracks recall only; when recall plateaus "
+        "(exhausts patience), Phase 2 activates the ECE metrics with fresh patience. "
+        "Requires early_stop_metric to include both recall and at least one ece_recall_* metric.",
     )
     p.add_argument("--debug_var_head_grad", action="store_true",
                    help="Log var_head gradient norms after backward (one line per epoch) to verify gradients flow")
@@ -206,25 +212,26 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
                 raise ValueError(f"early_stop_metric {m} requires model_mode=uncertainty.")
             if not out.get("use_labels"):
                 raise ValueError(f"early_stop_metric {m} requires use_labels.")
-        if m == "val_loss":
-            if not out.get("use_labels"):
-                raise ValueError("early_stop_metric val_loss requires use_labels.")
-            lt = out.get("losses")
-            if isinstance(lt, list):
-                loss_list = [str(x).strip().lower() for x in lt if str(x).strip()]
-            else:
-                loss_list = [s.strip().lower() for s in str(lt or "").split(",") if s.strip()]
-            has_ce = "ce" in loss_list
-            has_u = "uncertainty" in loss_list
-            if not has_ce and not has_u:
-                raise ValueError("early_stop_metric val_loss requires losses to include ce and/or uncertainty.")
-            if has_u and out.get("model_mode") != "uncertainty":
-                raise ValueError("early_stop_metric val_loss: uncertainty in losses requires model_mode=uncertainty.")
+
     rv = list(out.get("recall_values") or [1, 5, 10, 20])
     need_k = recall_values_needed_for_metrics(out["early_stop_metrics"])
     merged_rv = sorted(set(rv) | set(need_k))
     if merged_rv != rv:
         out["recall_values"] = merged_rv
+
+    # Validate phased early stop
+    if out.get("phased_early_stop"):
+        es = out["early_stop_metrics"]
+        has_ece = any(m.startswith("ece_recall_") for m in es)
+        if not has_ece:
+            raise ValueError(
+                "phased_early_stop requires early_stop_metric to include at least one "
+                "ece_recall_* metric (e.g. ece_recall,ece_recall_05,ece_recall_10)."
+            )
+        # Auto-add recall as Phase 1 metric if not already present.
+        if "recall" not in es:
+            out["early_stop_metrics"] = ["recall"] + es
+            logger.info("phased_early_stop: auto-added 'recall' to early_stop_metrics for Phase 1.")
 
     # Device auto-detection
     requested_device = str(out.get("device", "auto")).lower()

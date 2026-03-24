@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 _ECE_RECALL_ALIAS = {"ece_recall": "ece_recall_01"}
 
-_ALLOWED = frozenset({"recall", "ece_recall_01", "ece_recall_05", "ece_recall_10", "val_loss"})
+_ALLOWED = frozenset({"recall", "ece_recall_01", "ece_recall_05", "ece_recall_10"})
 
 
 def canonical_early_stop_metrics(raw: Any) -> List[str]:
@@ -54,7 +54,6 @@ def get_metric_value(
     recall_values: List[int],
     eval_wandb_metrics: Optional[Dict[str, Any]],
     dataset_name: str,
-    val_loss: Optional[float] = None,
 ) -> Optional[float]:
     """Scalar for this epoch, or None if unavailable."""
     if metric == "recall":
@@ -71,16 +70,6 @@ def get_metric_value(
         pref = f"Eval_{dataset_name}/ece_recall_{k:02d}"
         if eval_wandb_metrics and pref in eval_wandb_metrics:
             return float(eval_wandb_metrics[pref])
-        return None
-    if metric == "val_loss":
-        if val_loss is not None:
-            return float(val_loss)
-        if eval_wandb_metrics:
-            if "val/loss" in eval_wandb_metrics:
-                return float(eval_wandb_metrics["val/loss"])
-            pref = f"Eval_{dataset_name}/val_loss"
-            if pref in eval_wandb_metrics:
-                return float(eval_wandb_metrics[pref])
         return None
     return None
 

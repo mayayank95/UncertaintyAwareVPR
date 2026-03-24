@@ -1,126 +1,29 @@
 import logging
 from pathlib import Path
-from typing import Optional
 
 import faiss
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from configs.runtime import build_config_and_datasets, init_model, init_wandb, log_wandb_images
-from data.train_dataset import TrainDataset
 from data.test_dataset import TestDataset
 from eval_metrics import visualizations
 from eval_metrics.eval_ece_sh import compute_ece, _cal_mapk
 from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
-from losses import uncertainty_utils
 from utils import commons, wandb_utils
 
 logger = logging.getLogger(__name__)
 
 
-def _compute_val_gnll(args, all_descriptors, all_variances, positives_per_query, num_database):
-    """Validation uncertainty (GNLL) loss: same formula as train (query vs first positive). Returns float or None."""
-    if positives_per_query is None:
-        return None
-    valid = [(i, pos[0]) for i, pos in enumerate(positives_per_query) if len(pos) > 0]
-    if len(valid) == 0:
-        return None
-    q_idx = np.array([num_database + i for i, _ in valid])
-    db_idx = np.array([idx for _, idx in valid])
-    q = torch.from_numpy(all_descriptors[q_idx])
-    db = torch.from_numpy(all_descriptors[db_idx])
-    qv = torch.from_numpy(all_variances[q_idx])
-    q_norm = F.normalize(q, p=2, dim=1)
-    db_norm = F.normalize(db, p=2, dim=1)
-    loss = uncertainty_utils.compute_uncertainty_loss(
-        q_norm, db_norm, qv,
-        loss_type=args.get("uncertainty_loss", "gaussian_nll"),
-        lambda_=args.get("uncertainty_lambda", 1.0),
-        gnll_mu_scale_mode=args.get("gnll_mu_scale_mode", "sqrt_dim"),
-        gnll_mu_scale_value=args.get("gnll_mu_scale_value", 1.0),
-    )
-    return loss.item()
 
-
-def _loss_tokens(args) -> list:
-    losses = args.get("losses") or []
-    if isinstance(losses, list):
-        return [str(x).strip().lower() for x in losses if str(x).strip()]
-    return [s.strip().lower() for s in str(losses).split(",") if s.strip()]
-
-
-def _compute_val_ce(args, all_descriptors, num_database, test_ds, train_group, classifier, device):
-    """CosFace CE on val queries: MarginCosine logits + CrossEntropy, same as training.
-
-    Labels are CosPlace class indices in the current training group (from query path UTM + heading).
-    Queries whose class is not in this group are skipped."""
-    if train_group is None or classifier is None:
-        return None
-    if "ce" not in _loss_tokens(args):
-        return None
-    class_to_idx = {cid: i for i, cid in enumerate(train_group.classes_ids)}
-    if not class_to_idx:
-        return None
-    M, alpha, N, L = args["M"], args["alpha"], args["N"], args["L"]
-    rows = []
-    targets = []
-    for j in range(test_ds.num_queries):
-        path = test_ds.queries_paths[j]
-        parts = path.split("@")
-        if len(parts) <= 9:
-            continue
-        try:
-            utm_east = float(parts[1])
-            utm_north = float(parts[2])
-            heading = float(parts[9])
-        except (ValueError, IndexError):
-            continue
-        class_id, _ = TrainDataset.get__class_id__group_id(utm_east, utm_north, heading, M, alpha, N, L)
-        if class_id not in class_to_idx:
-            continue
-        local_idx = class_to_idx[class_id]
-        q = torch.from_numpy(all_descriptors[num_database + j].copy()).float().unsqueeze(0)
-        rows.append(q)
-        targets.append(local_idx)
-    if not rows:
-        return None
-    q_batch = torch.cat(rows, dim=0).to(device)
-    targets_t = torch.tensor(targets, dtype=torch.long, device=device)
-    ce_criterion = nn.CrossEntropyLoss()
-    clf = classifier.to(device)
-    output = clf(q_batch, targets_t)
-    loss = ce_criterion(output, targets_t)
-    clf.cpu()
-    return float(loss.item())
-
-
-def _combine_val_loss(args, val_ce: Optional[float], val_gnll: Optional[float]) -> Optional[float]:
-    """Total validation loss matching training: CE + uncertainty (when both in losses), else the active part."""
-    lt = _loss_tokens(args)
-    has_ce = "ce" in lt
-    has_u = "uncertainty" in lt and args.get("model_mode") == "uncertainty"
-    if not has_ce and not has_u:
-        return None
-    if has_ce and has_u:
-        if val_ce is None or val_gnll is None:
-            return None
-        return float(val_ce) + float(val_gnll)
-    if has_ce:
-        return float(val_ce) if val_ce is not None else None
-    return float(val_gnll) if val_gnll is not None else None
-
-
-def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None, log_dataset_info=True,
-                 classifiers=None, current_group_num=None, groups=None):
+def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None, log_dataset_info=True):
     """
     Evaluates the model on a single dataset.
     Extracts features once, then computes Recalls and Uncertainty metrics.
     log_dataset_info: if True, log dataset size (e.g. "Testing on ..."); set False when called every epoch from train.
-    classifiers, groups: optional; from train.py they enable val CE term in combined val_loss.
     """
     model = model.eval()
     # Use eval/<dataset_name> so we never conflict with a file named like the dataset (e.g. sf_xl)
@@ -213,27 +116,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         if not args['dry_run'] and args['datasets_type'] == ['test']:
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
 
-    # Validation uncertainty loss (for early stopping when backbone frozen)
-    val_gnll = None
-    if args.get("model_mode") == "uncertainty" and args.get("use_labels") and positives_per_query is not None:
-        val_gnll = _compute_val_gnll(args, all_descriptors, all_variances, positives_per_query, test_ds.num_database)
 
-    # Validation CE (CosFace + cross-entropy): same as train for queries in the current group's classes
-    val_ce = None
-    gn = int(args.get("groups_num") or 1)
-    cg = (wandb_step if wandb_step is not None else 0) % gn
-    if (
-        args.get("use_labels")
-        and classifiers is not None
-        and groups is not None
-        and cg < len(groups)
-        and "ce" in _loss_tokens(args)
-    ):
-        val_ce = _compute_val_ce(
-            args, all_descriptors, test_ds.num_database, test_ds, groups[cg], classifiers[cg], device,
-        )
-
-    val_loss = _combine_val_loss(args, val_ce, val_gnll)
 
     # --- 3. Uncertainty Metrics ---
     uncertainty_corr = None
@@ -295,14 +178,6 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         msg = f"Results for {dataset_name}: {recalls_str}"
         if map_at_k is not None:
             msg += " | " + ", ".join([f"mAP@{val}: {m:.2f}" for val, m in zip(args['recall_values'], map_at_k)])
-        if val_loss is not None:
-            msg += f", val_loss = {val_loss:.4f}"
-            if val_ce is not None and val_gnll is not None:
-                msg += f" (ce={val_ce:.4f}+unc={val_gnll:.4f})"
-            elif val_ce is not None:
-                msg += f" (ce={val_ce:.4f})"
-            elif val_gnll is not None:
-                msg += f" (unc={val_gnll:.4f})"
         logger.info(msg)
         if recalls[0] == 0 and map_at_k is not None and map_at_k[0] == 0:
             logger.info("R@1 and mAP@1 are 0 when no query has a positive at rank 1 (e.g. dry run with random descriptors, or frozen backbone with poor retrieval).")
@@ -327,10 +202,6 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
     # Flat keys (val/loss total, ece/recall_01, ...) when wandb_step is set so train.py time-series graphs get data.
     prefix = f"Eval_{dataset_name}/"
     wandb_metrics = {}
-    if val_loss is not None:
-        wandb_metrics[f"{prefix}val_loss"] = float(val_loss)
-        if wandb_step is not None:
-            wandb_metrics["val/loss"] = float(val_loss)
     if ece_result:
         if "ece_recall" in ece_result:
             for n, v in ece_result["ece_recall"].items():
@@ -363,7 +234,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             for p in sorted(preds_dir.glob("*.jpg")):
                 wandb_images[f"{prefix}predictions"].append(p)
 
-    return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images, val_loss
+    return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images
 
 if __name__ == "__main__":
     # ---- Load config and datasets (shared helper) ----
@@ -379,7 +250,7 @@ if __name__ == "__main__":
         name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
 
-        recalls, r_str, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images, _ = eval_dataset(
+        recalls, r_str, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images = eval_dataset(
             cfg, model, device, name, datasets_paths[name]["test"], wandb_step=None
         )
 

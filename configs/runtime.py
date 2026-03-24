@@ -54,7 +54,6 @@ _EARLY_STOP_NAME_SHORT = {
     "ece_recall_01": "es_ece1",
     "ece_recall_05": "es_ece5",
     "ece_recall_10": "es_ece10",
-    "val_loss": "es_valloss",
 }
 
 
@@ -114,6 +113,8 @@ def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
     # Add BN freeze tag only when the flag is enabled.
     if args.get("freeze_batchnorm"):
         parts.append("frzbn")
+    if args.get("phased_early_stop"):
+        parts.append("phased_es")
     return "_".join(parts)
 
 
