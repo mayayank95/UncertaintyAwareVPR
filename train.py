@@ -13,7 +13,7 @@ from data.train_dataset import TrainDataset
 from eval import eval_dataset
 from losses import cosface_loss
 from losses import uncertainty_utils
-from utils import augmentations, commons, util, wandb_utils
+from utils import augmentations, commons, early_stop_utils, util, wandb_utils
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +91,30 @@ def train(args, model, device, dataset_name, datasets_dir):
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
 
+    early_stop_metrics = args["early_stop_metrics"]
+    early_stop_best_values: dict = {m: early_stop_utils.initial_best_for_metric(m) for m in early_stop_metrics}
+    early_stop_best_epochs: dict = {m: None for m in early_stop_metrics}
+    not_improved_counts: dict = {m: 0 for m in early_stop_metrics}
+
     # ---- Resume from checkpoint ----
     if args.get('resume_train') is not None:
-        model, model_optimizer, classifiers, classifiers_optimizers, best_val_recall1, start_epoch_num = \
-            util.resume_train(device, args, args['log_dir'], model, model_optimizer, classifiers, classifiers_optimizers)
+        (
+            model, model_optimizer, classifiers, classifiers_optimizers,
+            best_val_recall1, start_epoch_num,
+            ckpt_es_bests, ckpt_es_epochs, ckpt_patience_counts,
+        ) = util.resume_train(device, args, args['log_dir'], model, model_optimizer, classifiers, classifiers_optimizers)
         epoch_num = start_epoch_num - 1
-        logger.info(f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}")
+        for m in early_stop_metrics:
+            if m in ckpt_es_bests:
+                early_stop_best_values[m] = float(ckpt_es_bests[m])
+            if m in ckpt_es_epochs and ckpt_es_epochs[m] is not None:
+                early_stop_best_epochs[m] = int(ckpt_es_epochs[m])
+            if m in ckpt_patience_counts:
+                not_improved_counts[m] = int(ckpt_patience_counts[m])
+        logger.info(
+            f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}; "
+            f"early_stop metrics: {early_stop_metrics}, patience counters: {not_improved_counts}"
+        )
     elif args.get('load_classifiers'):
         best_val_recall1 = start_epoch_num = 0
         logger.info(f"Loading classifier weights from {args['load_classifiers']}")
@@ -106,23 +124,29 @@ def train(args, model, device, dataset_name, datasets_dir):
     else:
         best_val_recall1 = start_epoch_num = 0
 
-    early_stop_metric = args.get("early_stop_metric", "recall")
-    best_val_ece_recall_01 = float("inf")
+    _warned_val_u = False
     if (args.get('resume_train') or args.get('resume_model')) and args.get("debug"):
         logger.info("Verifying resumed model performance (before any training)...")
-        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, _ = eval_dataset(
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, init_val_gnll = eval_dataset(
             args, model, device, dataset_name, val_set_folder, log_dataset_info=False,
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
         _xv = f"{init_max_var:.4f}" if init_max_var is not None else "N/A"
         _map = f", mAP@1={init_map_at_k[0]:.2f}" if init_map_at_k is not None else ""
-        ece_part = ""
-        if early_stop_metric == "ece_recall":
-            init_ece_key = f"Eval_{dataset_name}/ece_recall_01"
-            init_ece_val = init_eval_wandb_metrics.get(init_ece_key) if init_eval_wandb_metrics else None
-            if init_ece_val is not None:
-                best_val_ece_recall_01 = float(init_ece_val)
-                ece_part = f", ece_recall_01={best_val_ece_recall_01:.4f}"
+        extras = []
+        for m in early_stop_metrics:
+            v = early_stop_utils.get_metric_value(
+                m,
+                recalls=init_recalls,
+                recall_values=args["recall_values"],
+                eval_wandb_metrics=init_eval_wandb_metrics,
+                dataset_name=dataset_name,
+                val_gnll=init_val_gnll,
+            )
+            if v is not None:
+                early_stop_best_values[m] = float(v)
+                extras.append(f"{m}={v:.4f}" if m != "recall" else f"{m}={v:.1f}")
+        ece_part = f", init_early_stop=[{', '.join(extras)}]" if extras else ""
         logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}{_map}, mean_var={_mv}, max_var={_xv}{ece_part}")
     elif args.get('resume_train') or args.get('resume_model'):
         logger.debug("Skipping pre-training resume verification (enable --debug to run it).")
@@ -135,10 +159,9 @@ def train(args, model, device, dataset_name, datasets_dir):
                 f"{args['iterations_per_epoch'] * args['batch_size'] / len(groups[0]):.1f} times per epoch")
 
     patience = args.get('patience', 5)
-    not_improved_count = 0
 
     mean_variances_history = []
-    best_model_epoch = None
+    best_model_epoch = None  # recall best epoch (legacy summary); per-metric in early_stop_best_epochs
     best_variance_mean = None
     best_variance_std = None
     best_variance_min = None
@@ -252,25 +275,46 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, _ = eval_dataset(
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_gnll = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False,
         )
-        # Always track best recall@1 for metrics/checkpoint metadata.
-        is_recall_best = recalls[0] > best_val_recall1
+        # Track best recall@1 unconditionally for checkpoint metadata / W&B display.
         best_val_recall1 = max(recalls[0], best_val_recall1)
 
-        if early_stop_metric == "ece_recall":
-            ece_val = eval_wandb_metrics.get("ece/recall_01") if eval_wandb_metrics else None
-            if ece_val is not None:
-                ece_val_f = float(ece_val)
-                is_best = ece_val_f < best_val_ece_recall_01
-                best_val_ece_recall_01 = min(ece_val_f, best_val_ece_recall_01)
+        if "val_loss" in early_stop_metrics and val_gnll is None and not _warned_val_u:
+            logger.warning("early_stop includes val_loss but validation GNLL is None (need uncertainty mode + labels).")
+            _warned_val_u = True
+
+        improved: dict = {}
+        rv = args["recall_values"]
+        for m in early_stop_metrics:
+            if not_improved_counts[m] >= patience:
+                improved[m] = False
+                continue
+            cur = early_stop_utils.get_metric_value(
+                m,
+                recalls=recalls,
+                recall_values=rv,
+                eval_wandb_metrics=eval_wandb_metrics,
+                dataset_name=dataset_name,
+                val_gnll=val_gnll,
+            )
+            if cur is None:
+                improved[m] = False
+                continue
+            prev = early_stop_best_values[m]
+            if early_stop_utils.is_improvement(m, cur, prev):
+                improved[m] = True
+                early_stop_best_values[m] = max(cur, prev) if m == "recall" else min(cur, prev)
+                early_stop_best_epochs[m] = epoch_num
+                not_improved_counts[m] = 0
             else:
-                logger.debug("ECE recall@1 missing; falling back early-stop to recall.")
-                is_best = is_recall_best
-        else:
-            # Default: early stop on recall@1 improvements.
-            is_best = is_recall_best
+                improved[m] = False
+                not_improved_counts[m] += 1
+                if not_improved_counts[m] >= patience:
+                    logger.info(f"Metric '{m}' exhausted patience={patience} at epoch {epoch_num}. Locked.")
+
+        any_improved = any(improved.values())
 
         wandb_utils.log_train_epoch(
             args, epoch_num, recalls, map_at_k, best_val_recall1, active_losses,
@@ -279,21 +323,24 @@ def train(args, model, device, dataset_name, datasets_dir):
             eval_wandb_metrics, eval_wandb_images,
         )
 
-        if is_best:
-            not_improved_count = 0
+        if any_improved:
             best_model_epoch = epoch_num
             if epoch_variances:
                 best_variance_mean = float(np.mean(epoch_variances))
                 best_variance_std = float(np.std(epoch_variances))
                 best_variance_min = float(np.min(epoch_variances))
                 best_variance_max = float(np.max(epoch_variances))
-        else:
-            not_improved_count += 1
-            if not_improved_count >= patience:
-                logger.info(f"Early stopping triggered after {patience} epochs without improvement (metric: {early_stop_metric}).")
-                break
 
-        # Save checkpoint, which contains all training parameters
+        # Early stop: all metrics must have exhausted their patience.
+        exhausted = [m for m in early_stop_metrics if not_improved_counts[m] >= patience]
+        if len(exhausted) == len(early_stop_metrics):
+            logger.info(
+                f"Early stopping: all {len(early_stop_metrics)} metric(s) exhausted patience={patience}. "
+                f"Last improvement epochs: {early_stop_best_epochs}"
+            )
+            break
+
+        # Save checkpoint + per-metric best models
         if not args['dry_run']:
             util.save_checkpoint({
                 "epoch_num": epoch_num + 1,
@@ -302,10 +349,16 @@ def train(args, model, device, dataset_name, datasets_dir):
                 "classifiers_state_dict": [c.state_dict() for c in classifiers],
                 "optimizers_state_dict": [c.state_dict() if c is not None else {} for c in classifiers_optimizers],
                 "best_val_recall1": best_val_recall1,
-                "best_model_epoch": best_model_epoch,
-            }, is_best, args['log_dir'])
-            if is_best:
-                logger.info(f"Saved best_model.pth — best_model_epoch={epoch_num} (early_stop_metric={early_stop_metric}).")
+                "best_model_epoch": early_stop_best_epochs.get("recall"),
+                "early_stop_metrics": early_stop_metrics,
+                "early_stop_best_values": dict(early_stop_best_values),
+                "early_stop_best_epochs": {k: v for k, v in early_stop_best_epochs.items() if v is not None},
+                "not_improved_counts": dict(not_improved_counts),
+            }, args['log_dir'], best_for_metrics=improved if any_improved else None)
+            saved = [m for m, ok in improved.items() if ok]
+            if saved:
+                files = [early_stop_utils.best_model_filename(m, early_stop_metrics) for m in saved]
+                logger.info(f"Saved best checkpoint(s): {list(zip(saved, files))}")
 
         if args['dry_run']:
             break
@@ -325,25 +378,35 @@ def train(args, model, device, dataset_name, datasets_dir):
                     _wandb.run.summary["best_variance_std"] = float(best_variance_std)
                     _wandb.run.summary["best_variance_min"] = float(best_variance_min)
                     _wandb.run.summary["best_variance_max"] = float(best_variance_max)
-                if early_stop_metric == "ece_recall":
-                    if best_val_ece_recall_01 != float("inf"):
-                        _wandb.run.summary["best_ece_recall_01"] = float(best_val_ece_recall_01)
-                    else:
-                        _wandb.run.summary["best_ece_recall_01"] = None
-                _wandb.run.summary["early_stop_metric"] = str(early_stop_metric)
+                _wandb.run.summary["early_stop_metrics"] = list(early_stop_metrics)
+                for m in early_stop_metrics:
+                    bv = early_stop_best_values.get(m)
+                    be = early_stop_best_epochs.get(m)
+                    sm = m.replace("/", "_")
+                    if bv is not None and bv != float("inf"):
+                        _wandb.run.summary[f"best_value_{sm}"] = float(bv)
+                    if be is not None:
+                        _wandb.run.summary[f"best_epoch_{sm}"] = int(be)
         except Exception:
             # Summary is best-effort; do not fail training due to logging.
             pass
 
     logger.info(f"Trained for {epoch_num+1:02d} epochs, in total in {str(datetime.now() - start_time)[:-7]}")
     if best_model_epoch is not None:
-        summary = (
-            f"Best model summary: best_model_epoch={best_model_epoch}, "
-            f"best_val_recall_01={best_val_recall1:.4f}, early_stop_metric={early_stop_metric}"
-        )
-        if early_stop_metric == "ece_recall" and best_val_ece_recall_01 != float("inf"):
-            summary += f", best_ece_recall_01={best_val_ece_recall_01:.4f}"
-        logger.info(summary)
+        parts = [
+            f"best_model_epoch={best_model_epoch}",
+            f"best_val_recall_01={best_val_recall1:.4f}",
+            f"early_stop_metrics={early_stop_metrics}",
+        ]
+        for m in early_stop_metrics:
+            if m != "recall":
+                bv = early_stop_best_values.get(m)
+                if bv is not None and bv != float("inf"):
+                    parts.append(f"best_{m}={bv:.4f}")
+            be = early_stop_best_epochs.get(m)
+            if be is not None:
+                parts.append(f"best_epoch_{m}={be}")
+        logger.info("Best model summary: " + ", ".join(parts))
     else:
         logger.info("Best model summary: no best_model_epoch set (no improvement vs initial metric).")
     logger.info("Experiment finished (without any errors)")

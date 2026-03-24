@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
+from utils.early_stop_utils import canonical_early_stop_metrics, recall_values_needed_for_metrics
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,8 +129,9 @@ def parse_args() -> argparse.Namespace:
         "--early_stop_metric",
         type=str,
         default="recall",
-        choices=["recall", "ece_recall"],
-        help="Metric for early stopping: recall (maximize R@1) or ece_recall (minimize ECE recall@1 calibration error).",
+        help="Early-stop metrics separated by commas (,). Example: recall,ece_recall,ece_recall_05,val_loss. "
+        "Tokens: recall; ece_recall (R@1 ECE); ece_recall_05; ece_recall_10; val_loss (min val uncertainty loss). "
+        "Each metric has its own patience counter; each saves best_model_<metric>.pth (best_model.pth when only recall).",
     )
     p.add_argument("--debug_var_head_grad", action="store_true",
                    help="Log var_head gradient norms after backward (one line per epoch) to verify gradients flow")
@@ -193,6 +196,25 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
             out["ece_metrics"] = [str(x).strip().lower() for x in v if str(x).strip()]
         else:
             out["ece_metrics"] = [s.strip().lower() for s in str(v).split(",") if s.strip()]
+
+    raw_es = out.get("early_stop_metric", "recall")
+    out["early_stop_metrics"] = canonical_early_stop_metrics(raw_es)
+    for m in out["early_stop_metrics"]:
+        if m.startswith("ece_recall_"):
+            if out.get("model_mode") != "uncertainty":
+                raise ValueError(f"early_stop_metric {m} requires model_mode=uncertainty.")
+            if not out.get("use_labels"):
+                raise ValueError(f"early_stop_metric {m} requires use_labels.")
+        if m == "val_loss":
+            if out.get("model_mode") != "uncertainty":
+                raise ValueError("early_stop_metric val_loss requires model_mode=uncertainty.")
+            if not out.get("use_labels"):
+                raise ValueError("early_stop_metric val_loss requires use_labels.")
+    rv = list(out.get("recall_values") or [1, 5, 10, 20])
+    need_k = recall_values_needed_for_metrics(out["early_stop_metrics"])
+    merged_rv = sorted(set(rv) | set(need_k))
+    if merged_rv != rv:
+        out["recall_values"] = merged_rv
 
     # Device auto-detection
     requested_device = str(out.get("device", "auto")).lower()
