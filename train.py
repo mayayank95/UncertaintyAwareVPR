@@ -127,8 +127,9 @@ def train(args, model, device, dataset_name, datasets_dir):
     _warned_val_u = False
     if (args.get('resume_train') or args.get('resume_model')) and args.get("debug"):
         logger.info("Verifying resumed model performance (before any training)...")
-        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, init_val_gnll = eval_dataset(
-            args, model, device, dataset_name, val_set_folder, log_dataset_info=False,
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, init_val_loss = eval_dataset(
+            args, model, device, dataset_name, val_set_folder, wandb_step=0, log_dataset_info=False,
+            classifiers=classifiers, groups=groups,
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
         _xv = f"{init_max_var:.4f}" if init_max_var is not None else "N/A"
@@ -141,7 +142,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                 recall_values=args["recall_values"],
                 eval_wandb_metrics=init_eval_wandb_metrics,
                 dataset_name=dataset_name,
-                val_gnll=init_val_gnll,
+                val_loss=init_val_loss,
             )
             if v is not None:
                 early_stop_best_values[m] = float(v)
@@ -275,14 +276,18 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_gnll = eval_dataset(
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, val_loss = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False,
+            classifiers=classifiers, groups=groups,
         )
         # Track best recall@1 unconditionally for checkpoint metadata / W&B display.
         best_val_recall1 = max(recalls[0], best_val_recall1)
 
-        if "val_loss" in early_stop_metrics and val_gnll is None and not _warned_val_u:
-            logger.warning("early_stop includes val_loss but validation GNLL is None (need uncertainty mode + labels).")
+        if "val_loss" in early_stop_metrics and val_loss is None and not _warned_val_u:
+            logger.warning(
+                "early_stop includes val_loss but validation total loss is None "
+                "(need use_labels; ce and/or uncertainty in losses; for ce need queries in current CosPlace group; for uncertainty need model_mode=uncertainty)."
+            )
             _warned_val_u = True
 
         improved: dict = {}
@@ -297,7 +302,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                 recall_values=rv,
                 eval_wandb_metrics=eval_wandb_metrics,
                 dataset_name=dataset_name,
-                val_gnll=val_gnll,
+                val_loss=val_loss,
             )
             if cur is None:
                 improved[m] = False
@@ -331,16 +336,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                 best_variance_min = float(np.min(epoch_variances))
                 best_variance_max = float(np.max(epoch_variances))
 
-        # Early stop: all metrics must have exhausted their patience.
-        exhausted = [m for m in early_stop_metrics if not_improved_counts[m] >= patience]
-        if len(exhausted) == len(early_stop_metrics):
-            logger.info(
-                f"Early stopping: all {len(early_stop_metrics)} metric(s) exhausted patience={patience}. "
-                f"Last improvement epochs: {early_stop_best_epochs}"
-            )
-            break
-
-        # Save checkpoint + per-metric best models
+        # Save checkpoint + per-metric best models (before early-stop break so this epoch is persisted).
         if not args['dry_run']:
             util.save_checkpoint({
                 "epoch_num": epoch_num + 1,
@@ -359,6 +355,15 @@ def train(args, model, device, dataset_name, datasets_dir):
             if saved:
                 files = [early_stop_utils.best_model_filename(m, early_stop_metrics) for m in saved]
                 logger.info(f"Saved best checkpoint(s): {list(zip(saved, files))}")
+
+        # Early stop: all metrics must have exhausted their patience.
+        exhausted = [m for m in early_stop_metrics if not_improved_counts[m] >= patience]
+        if len(exhausted) == len(early_stop_metrics):
+            logger.info(
+                f"Early stopping: all {len(early_stop_metrics)} metric(s) exhausted patience={patience}. "
+                f"Last improvement epochs: {early_stop_best_epochs}"
+            )
+            break
 
         if args['dry_run']:
             break

@@ -54,7 +54,7 @@ def get_metric_value(
     recall_values: List[int],
     eval_wandb_metrics: Optional[Dict[str, Any]],
     dataset_name: str,
-    val_gnll: Optional[float],
+    val_loss: Optional[float] = None,
 ) -> Optional[float]:
     """Scalar for this epoch, or None if unavailable."""
     if metric == "recall":
@@ -65,7 +65,6 @@ def get_metric_value(
         k = int(metric.rsplit("_", 1)[-1])
         if k not in recall_values:
             return None
-        idx = recall_values.index(k)
         flat = f"ece/recall_{k:02d}"
         if eval_wandb_metrics and flat in eval_wandb_metrics:
             return float(eval_wandb_metrics[flat])
@@ -74,12 +73,12 @@ def get_metric_value(
             return float(eval_wandb_metrics[pref])
         return None
     if metric == "val_loss":
-        if val_gnll is not None:
-            return float(val_gnll)
+        if val_loss is not None:
+            return float(val_loss)
         if eval_wandb_metrics:
-            if "val/loss_uncertainty" in eval_wandb_metrics:
-                return float(eval_wandb_metrics["val/loss_uncertainty"])
-            pref = f"Eval_{dataset_name}/val_loss_uncertainty"
+            if "val/loss" in eval_wandb_metrics:
+                return float(eval_wandb_metrics["val/loss"])
+            pref = f"Eval_{dataset_name}/val_loss"
             if pref in eval_wandb_metrics:
                 return float(eval_wandb_metrics[pref])
         return None

@@ -131,8 +131,8 @@ def log_train_epoch(
         metrics["train/variance_std"] = float(np.std(epoch_variances))
 
     # ── val/ ── losses, recalls, variance statistics, plots
-    if "val/loss_uncertainty" in eval_wandb_metrics:
-        metrics["val/loss_uncertainty"] = float(eval_wandb_metrics["val/loss_uncertainty"])
+    if "val/loss" in eval_wandb_metrics:
+        metrics["val/loss"] = float(eval_wandb_metrics["val/loss"])
     metrics["val/best_recall_01"] = float(best_val_recall1)
     _add_recall_metrics(metrics, "val/", recalls, rv)
     _add_map_metrics(metrics, "val/", map_at_k, rv)
@@ -153,7 +153,7 @@ def log_train_epoch(
         _merge_images_into_metrics(metrics, {"val/uncertainty_correlation_scatter": epoch_images["val/uncertainty_correlation_scatter"]})
     if "val/predictions" in epoch_images and epoch_images["val/predictions"]:
         _merge_images_into_metrics(metrics, {"val/predictions": epoch_images["val/predictions"]})
-    _val_handled = {"val/loss_ce", "val/loss_uncertainty", "val/loss_total", "val/loss"}
+    _val_handled = {"val/loss_total", "val/loss"}
     for k, v in eval_wandb_metrics.items():
         if not k.startswith("eval/") and k.startswith("val/") and k not in metrics and k not in _val_handled:
             metrics[k] = v
