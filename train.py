@@ -301,8 +301,11 @@ def train(args, model, device, dataset_name, datasets_dir):
                 "optimizer_state_dict": model_optimizer.state_dict(),
                 "classifiers_state_dict": [c.state_dict() for c in classifiers],
                 "optimizers_state_dict": [c.state_dict() if c is not None else {} for c in classifiers_optimizers],
-                "best_val_recall1": best_val_recall1
+                "best_val_recall1": best_val_recall1,
+                "best_model_epoch": best_model_epoch,
             }, is_best, args['log_dir'])
+            if is_best:
+                logger.info(f"Saved best_model.pth — best_model_epoch={epoch_num} (early_stop_metric={early_stop_metric}).")
 
         if args['dry_run']:
             break
@@ -333,6 +336,16 @@ def train(args, model, device, dataset_name, datasets_dir):
             pass
 
     logger.info(f"Trained for {epoch_num+1:02d} epochs, in total in {str(datetime.now() - start_time)[:-7]}")
+    if best_model_epoch is not None:
+        summary = (
+            f"Best model summary: best_model_epoch={best_model_epoch}, "
+            f"best_val_recall_01={best_val_recall1:.4f}, early_stop_metric={early_stop_metric}"
+        )
+        if early_stop_metric == "ece_recall" and best_val_ece_recall_01 != float("inf"):
+            summary += f", best_ece_recall_01={best_val_ece_recall_01:.4f}"
+        logger.info(summary)
+    else:
+        logger.info("Best model summary: no best_model_epoch set (no improvement vs initial metric).")
     logger.info("Experiment finished (without any errors)")
 
 if __name__ == "__main__":

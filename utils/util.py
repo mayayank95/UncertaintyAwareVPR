@@ -23,10 +23,13 @@ def save_checkpoint(state: dict, is_best: bool, output_folder: str,
     checkpoint_path = f"{output_folder}/{ckpt_filename}"
     torch.save(state, checkpoint_path)
     if is_best:
-        torch.save({
+        best_payload = {
             "model_state_dict": state["model_state_dict"],
-            "classifiers_state_dict": state["classifiers_state_dict"]
-        }, f"{output_folder}/best_model.pth")
+            "classifiers_state_dict": state["classifiers_state_dict"],
+        }
+        if state.get("best_model_epoch") is not None:
+            best_payload["best_model_epoch"] = int(state["best_model_epoch"])
+        torch.save(best_payload, f"{output_folder}/best_model.pth")
 
 
 def resume_train(device: str, args: Dict, output_folder: str, model: torch.nn.Module,

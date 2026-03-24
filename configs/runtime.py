@@ -51,7 +51,6 @@ _UNCERTAINTY_LOSS_NAME_SHORT = {
 }
 
 _EARLY_STOP_NAME_SHORT = {
-    "recall": "es_recall",
     "ece_recall": "es_ece",
 }
 
@@ -78,9 +77,10 @@ def _default_wandb_run_name(args: Dict[str, Any], job_type: str) -> str:
     if "uncertainty" in loss_tokens:
         parts.append(_uncertainty_loss_tag(args.get("uncertainty_loss", "gaussian_nll")))
 
-    # Early stopping metric (train jobs)
+    # Early stopping metric: omit when default (recall); tag non-default only.
     esm = str(args.get("early_stop_metric", "recall") or "recall").strip().lower()
-    parts.append(_EARLY_STOP_NAME_SHORT.get(esm, f"es_{esm}"))
+    if esm != "recall":
+        parts.append(_EARLY_STOP_NAME_SHORT.get(esm, f"es_{esm}"))
 
     # if init_var flag on
     if args.get("var_init"):
