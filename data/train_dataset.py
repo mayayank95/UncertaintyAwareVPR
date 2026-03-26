@@ -52,9 +52,11 @@ class TrainDataset(torch.utils.data.Dataset):
             if current_group == 0:
                 logger.debug(f"Using cached dataset {filename}")
             classes_per_group, self.images_per_class = torch.load(filename, weights_only=False)
+            self.images_per_class = self._normalize_images_per_class_paths(self.images_per_class, dataset_folder)
         else:
             logger.debug(f"Cached dataset {filename} does not exist, I'll create it now.")
             classes_per_group, self.images_per_class = self.initialize(dataset_folder, M, N, alpha, L, min_images_per_class)
+            self.images_per_class = self._normalize_images_per_class_paths(self.images_per_class, dataset_folder)
             if not args['dry_run']:
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
                 torch.save((classes_per_group, self.images_per_class), filename)
@@ -79,6 +81,38 @@ class TrainDataset(torch.utils.data.Dataset):
     @staticmethod
     def open_image(path):
         return Image.open(path).convert("RGB")
+
+    @staticmethod
+    def _to_relative_dataset_path(image_path: str, dataset_folder: str) -> str:
+        """Convert a path to be relative to dataset_folder when possible."""
+        if not image_path:
+            return image_path
+
+        dataset_folder = os.path.normpath(dataset_folder)
+        norm_path = os.path.normpath(image_path)
+
+        if os.path.isabs(norm_path):
+            if norm_path.startswith(dataset_folder + os.sep):
+                return os.path.relpath(norm_path, dataset_folder)
+
+            marker = f"{os.sep}train{os.sep}"
+            idx = norm_path.lower().rfind(marker.lower())
+            if idx != -1:
+                return norm_path[idx + len(marker):]
+
+            return os.path.basename(norm_path)
+
+        return norm_path
+
+    @staticmethod
+    def _normalize_images_per_class_paths(images_per_class, dataset_folder):
+        normalized = {}
+        for class_id, paths in images_per_class.items():
+            normalized[class_id] = [
+                TrainDataset._to_relative_dataset_path(p, dataset_folder)
+                for p in paths
+            ]
+        return normalized
     
     def __getitem__(self, class_num):
         # This function takes as input the class_num instead of the index of
@@ -115,7 +149,8 @@ class TrainDataset(torch.utils.data.Dataset):
     def initialize(dataset_folder, M, N, alpha, L, min_images_per_class):
         logger.debug(f"Searching training images in {dataset_folder}")
         
-        images_paths = dataset_utils.read_images_paths(dataset_folder)
+        # Save relative paths in cache to keep it portable across machines.
+        images_paths = dataset_utils.read_images_paths(dataset_folder, get_abs_path=False)
         logger.debug(f"Found {len(images_paths)} images")
         
         logger.debug("For each image, get its UTM east, UTM north and heading from its path")
