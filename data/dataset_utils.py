@@ -8,6 +8,36 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 logger = logging.getLogger(__name__)
 
+def _resolve_cached_path(dataset_folder: str, cached_path: str) -> str:
+    """
+    Resolve one line from *_images_paths.txt into a valid absolute path.
+    Supports relative cache entries and stale absolute entries from another machine.
+    """
+    normalized = cached_path.strip()
+    if not normalized:
+        return normalized
+
+    # Expected cache format: relative path.
+    if not os.path.isabs(normalized):
+        return os.path.join(dataset_folder, normalized)
+
+    # Absolute path that is still valid on this machine.
+    if os.path.exists(normalized):
+        return normalized
+
+    # Stale absolute path (e.g. /home/.../train/... on a different host):
+    # remap suffix after split folder name (train/val/test/database/queries).
+    split_name = os.path.basename(dataset_folder.rstrip("\\/"))
+    marker = f"{os.sep}{split_name}{os.sep}"
+    stale_abs = os.path.normpath(normalized)
+    idx = stale_abs.lower().rfind(marker.lower())
+    if idx != -1:
+        suffix = stale_abs[idx + len(marker):]
+        return os.path.join(dataset_folder, suffix)
+
+    # Last fallback: preserve filename under current dataset folder.
+    return os.path.join(dataset_folder, os.path.basename(stale_abs))
+
 def read_images_paths(dataset_folder, get_abs_path=True):
     """
     Finds image paths within 'dataset_folder' efficiently.
@@ -36,13 +66,23 @@ def read_images_paths(dataset_folder, get_abs_path=True):
             images_paths = file.read().splitlines()
         
         if get_abs_path:
-            # Use os.path.join for robust path construction
-            images_paths = [os.path.join(dataset_folder, path) for path in images_paths]
+            images_paths = [_resolve_cached_path(dataset_folder, path) for path in images_paths]
             
-        # Quick sanity check on the first image
+        if len(images_paths) == 0:
+            raise FileNotFoundError(f"{file_with_paths} is empty")
+
+        # Sanity check: ensure cached paths actually exist.
         sample_path = images_paths[0] if get_abs_path else os.path.join(dataset_folder, images_paths[0])
         if not os.path.exists(sample_path):
-            raise FileNotFoundError(f"Image {sample_path} not found. Check {file_with_paths}")
+            first_existing = next(
+                (p for p in images_paths if os.path.exists(p if get_abs_path else os.path.join(dataset_folder, p))),
+                None,
+            )
+            if first_existing is None:
+                raise FileNotFoundError(
+                    f"Cached image paths in {file_with_paths} do not match files under {dataset_folder}. "
+                    "Regenerate cache paths for this machine."
+                )
             
     # 2. SLOW PATH: Use glob if no text file is provided
     else:
