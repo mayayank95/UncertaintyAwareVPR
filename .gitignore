@@ -1,5 +1,6 @@
-# virtual enviroment
+# Virtual environments (local Python venvs; never commit)
 .venv/
+maya_vpr/
 __pycache__/
 *.pyc
 .vscode/
@@ -13,6 +14,9 @@ __pycache__/
 datasets/
 raw_data/
 configs/datasets.json
+
+# Shell scripts
+*.sh
 
 # Training outputs
 runs/
