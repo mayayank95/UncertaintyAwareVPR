@@ -1,6 +1,7 @@
 # Virtual environments (local Python venvs; never commit)
 .venv/
 maya_vpr/
+kornia_env/
 __pycache__/
 *.pyc
 .vscode/
