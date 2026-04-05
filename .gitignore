@@ -35,6 +35,11 @@ lightning_logs/
 *.pt
 *.npz
 
+# Images
+*.png
+*.jpg
+*.jpeg
+
 # Experiment artifacts
 experiments
 experiments/**/results/
