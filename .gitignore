@@ -40,6 +40,11 @@ lightning_logs/
 *.jpg
 *.jpeg
 
+# Data & Logs
+*.txt
+*.pkl
+*.log
+
 # Experiment artifacts
 experiments
 experiments/**/results/
