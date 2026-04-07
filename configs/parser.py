@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--save_descriptors", action="store_true", help="Save extracted descriptors to disk")
     p.add_argument("--positive_dist_threshold", type=int, default=None, help="Distance in meters for a positive match")
     p.add_argument("--use_labels", action="store_true", help="Use UTM coordinates from image paths for evaluation")
+    p.add_argument("--only_recalls", action="store_true", help="Only compute recalls, skip mAP and other metrics for speed")
 
     # Visualization
     p.add_argument("--num_preds_to_save", type=int, default=3, help="Number of predictions to save per query")
@@ -75,6 +76,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--iterations_per_epoch", type=int, default=10000, help="Number of training iterations per epoch")
     p.add_argument("--epochs_num", type=int, default=50, help="Total number of training epochs")
     p.add_argument("--patience", type=int, default=None, help="Patience for early stopping (epochs without improvement)")
+    p.add_argument("--disable_early_stop", action="store_true", help="Disable early stopping and always run all epochs")
     p.add_argument("--losses", type=str, default=None, help="Losses to use, comma-separated (e.g. 'ce', 'ce,uncertainty')")
 
     # Data augmentation

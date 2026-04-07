@@ -168,7 +168,14 @@ def train(args, model, device, dataset_name, datasets_dir):
                 f"with batch_size {args['batch_size']}, therefore the model sees each class (on average) " +
                 f"{args['iterations_per_epoch'] * args['batch_size'] / len(groups[0]):.1f} times per epoch")
 
-    patience = args.get('patience', 5)
+    early_stop_enabled = not args.get("disable_early_stop", False)
+    patience = args.get("patience", 5)
+    if early_stop_enabled and patience is None:
+        patience = 5
+    if early_stop_enabled:
+        logger.info(f"Early stopping enabled with patience={patience}.")
+    else:
+        logger.info("Early stopping disabled: training will run until epochs_num is reached.")
 
     mean_variances_history = []
     best_model_epoch = None  # recall best epoch (legacy summary); per-metric in early_stop_best_epochs
@@ -298,7 +305,7 @@ def train(args, model, device, dataset_name, datasets_dir):
             if m not in active_phase_metrics:
                 improved[m] = False
                 continue
-            if not_improved_counts[m] >= patience:
+            if early_stop_enabled and not_improved_counts[m] >= patience:
                 improved[m] = False
                 continue
             cur = early_stop_utils.get_metric_value(
@@ -320,7 +327,7 @@ def train(args, model, device, dataset_name, datasets_dir):
             else:
                 improved[m] = False
                 not_improved_counts[m] += 1
-                if not_improved_counts[m] >= patience:
+                if early_stop_enabled and not_improved_counts[m] >= patience:
                     logger.info(f"Metric '{m}' exhausted patience={patience} at epoch {epoch_num}. Locked.")
 
         any_improved = any(improved.values())
@@ -361,7 +368,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                 logger.info(f"Saved best checkpoint(s): {list(zip(saved, files))}")
 
         # ---- Phased early stop: transition from recall → ECE ----
-        if phased and not ece_phase_started and not_improved_counts.get("recall", 0) >= patience:
+        if early_stop_enabled and phased and not ece_phase_started and not_improved_counts.get("recall", 0) >= patience:
             ece_phase_started = True
             active_phase_metrics = phase2_metrics
             # Seed ECE best values from current epoch and reset patience counters.
@@ -380,13 +387,14 @@ def train(args, model, device, dataset_name, datasets_dir):
             )
 
         # Early stop: all *active* metrics must have exhausted their patience.
-        exhausted = [m for m in active_phase_metrics if not_improved_counts[m] >= patience]
-        if ece_phase_started and len(exhausted) == len(active_phase_metrics):
-            logger.info(
-                f"Early stopping: all {len(active_phase_metrics)} active metric(s) exhausted patience={patience}. "
-                f"Last improvement epochs: {early_stop_best_epochs}"
-            )
-            break
+        if early_stop_enabled:
+            exhausted = [m for m in active_phase_metrics if not_improved_counts[m] >= patience]
+            if ece_phase_started and len(exhausted) == len(active_phase_metrics):
+                logger.info(
+                    f"Early stopping: all {len(active_phase_metrics)} active metric(s) exhausted patience={patience}. "
+                    f"Last improvement epochs: {early_stop_best_epochs}"
+                )
+                break
 
         if args['dry_run']:
             break

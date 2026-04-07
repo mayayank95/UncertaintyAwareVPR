@@ -111,7 +111,9 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
                     break
         recalls = recalls / test_ds.num_queries * 100
         recalls_str = ", ".join([f"R@{val}: {rec:.1f}" for val, rec in zip(args['recall_values'], recalls)])
-        map_at_k = [_cal_mapk(predictions, positives_per_query, n) for n in args['recall_values']]
+        map_at_k = None
+        if not args.get('only_recalls'):
+            map_at_k = [_cal_mapk(predictions, positives_per_query, n) for n in args['recall_values']]
         
         if not args['dry_run'] and args['datasets_type'] == ['test']:
             (dataset_output_dir / "recalls.txt").write_text(recalls_str)
