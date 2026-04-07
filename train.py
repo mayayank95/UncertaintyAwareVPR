@@ -123,7 +123,7 @@ def train(args, model, device, dataset_name, datasets_dir):
             if m in ckpt_patience_counts:
                 not_improved_counts[m] = int(ckpt_patience_counts[m])
         logger.info(
-            f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.1f} from checkpoint {args['resume_train']}; "
+            f"Resuming from epoch {start_epoch_num} with best R@1 {best_val_recall1:.2f} from checkpoint {args['resume_train']}; "
             f"early_stop metrics: {early_stop_metrics}, patience counters: {not_improved_counts}"
         )
     elif args.get('load_classifiers'):
@@ -135,8 +135,9 @@ def train(args, model, device, dataset_name, datasets_dir):
     else:
         best_val_recall1 = start_epoch_num = 0
 
-    if (args.get('resume_train') or args.get('resume_model')) and args.get("debug"):
-        logger.info("Verifying resumed model performance (before any training)...")
+    is_resuming = args.get('resume_train') or args.get('resume_model') or args.get('method') == 'cosplace_pretrained'
+    if is_resuming and args.get("debug"):
+        logger.info(f"Verifying resumed/pretrained model performance on '{val_set_folder}' folder (before any training)...")
         init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=0, log_dataset_info=False,
         )
@@ -154,9 +155,9 @@ def train(args, model, device, dataset_name, datasets_dir):
             )
             if v is not None:
                 early_stop_best_values[m] = float(v)
-                extras.append(f"{m}={v:.4f}" if m != "recall" else f"{m}={v:.1f}")
+                extras.append(f"{m}={v:.4f}" if m != "recall" else f"{m}={v:.2f}")
         ece_part = f", init_early_stop=[{', '.join(extras)}]" if extras else ""
-        logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.1f}{_map}, mean_var={_mv}, max_var={_xv}{ece_part}")
+        logger.info(f"Initial val (after var_init, before training): R@1={init_recalls[0]:.2f}{_map}, mean_var={_mv}, max_var={_xv}{ece_part}")
     elif args.get('resume_train') or args.get('resume_model'):
         logger.debug("Skipping pre-training resume verification (enable --debug to run it).")
 
@@ -374,7 +375,7 @@ def train(args, model, device, dataset_name, datasets_dir):
                 not_improved_counts[m] = 0
             logger.info(
                 f"Phased early stop: recall plateaued at epoch {epoch_num} "
-                f"(best R@1={early_stop_best_values.get('recall', 0):.1f} at epoch {early_stop_best_epochs.get('recall')}). "
+                f"(best R@1={early_stop_best_values.get('recall', 0):.2f} at epoch {early_stop_best_epochs.get('recall')}). "
                 f"Activating Phase 2 ECE metrics: {phase2_metrics} with fresh patience={patience}."
             )
 
