@@ -250,8 +250,12 @@ if __name__ == "__main__":
         name = entry["name"]
         logger.info(f"Starting evaluation: {name}")
 
+        eval_ds_path = datasets_paths[name]["test"]
+        if not eval_ds_path.exists():
+            eval_ds_path = datasets_paths[name]["validation"]
+            logger.info(f"[{name}] 'test' folder not found, using 'val' instead.")
         recalls, r_str, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images = eval_dataset(
-            cfg, model, device, name, datasets_paths[name]["test"], wandb_step=None
+            cfg, model, device, name, eval_ds_path, wandb_step=None
         )
 
         wandb_utils.log_eval_dataset(

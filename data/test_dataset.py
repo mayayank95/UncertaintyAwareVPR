@@ -22,6 +22,16 @@ class TestDataset(data.Dataset):
         """
         super().__init__()
 
+        # Support both "queries" and "query" folder names
+        from pathlib import Path
+        qf = Path(queries_folder)
+        if not qf.exists():
+            alt_name = "query" if qf.name == "queries" else "queries"
+            alt = qf.parent / alt_name
+            if alt.exists():
+                logger.info(f"Queries folder '{qf.name}' not found, using '{alt_name}' instead.")
+                queries_folder = str(alt)
+
         if "msls" in database_folder.lower() and image_size is not None:
             resize_test_imgs = True
             logger.info("Forcing resize_test_imgs=True for MSLS dataset")
