@@ -35,8 +35,19 @@ def get_model(args: Dict[str, Any]) -> torch.nn.Module:
         model = deliver_model(args)
     elif method == "cosplace_pretrained":
         logger.info(f"Loading pretrained model from torch.hub: backbone={args['backbone']}, dim={args['descriptors_dimension']}")
-        model = torch.hub.load("gmberton/cosplace", "get_trained_model", args["backbone"], args["descriptors_dimension"])
-        model = GeneralModelWrapper(model)
+        hub_model = torch.hub.load("gmberton/cosplace", "get_trained_model", args["backbone"], args["descriptors_dimension"])
+        if args.get("model_mode") == "uncertainty":
+            # Build full Uncertainty model (with var_head), then load hub weights into backbone/aggregation
+            model = deliver_model(args)
+            hub_sd = hub_model.state_dict()
+            missing, unexpected = model.load_state_dict(hub_sd, strict=False)
+            logger.info("Loaded pretrained hub weights into Uncertainty model (strict=False).")
+            if missing:
+                logger.debug("Keys left at init (expected for var_head/final_l2): %s", missing)
+            if unexpected:
+                logger.debug("Unexpected hub keys (ignored): %s", unexpected)
+        else:
+            model = GeneralModelWrapper(hub_model)
     else:
         raise ValueError(f"Unknown method: {method}")
 
