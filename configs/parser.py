@@ -74,6 +74,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--classifiers_lr", type=float, default=0.01, help="Learning rate for classifier optimizers")
     p.add_argument("--batch_size", type=int, default=None, help="Batch size for training DataLoader")
     p.add_argument("--iterations_per_epoch", type=int, default=10000, help="Number of training iterations per epoch")
+    p.add_argument(
+        "--log_every_n_iterations",
+        type=int,
+        default=1000,
+        help="Log training stats every N iterations within each epoch (rolling mean over last N); 0 disables.",
+    )
     p.add_argument("--epochs_num", type=int, default=50, help="Total number of training epochs")
     p.add_argument("--patience", type=int, default=None, help="Patience for early stopping (epochs without improvement)")
     p.add_argument("--disable_early_stop", action="store_true", help="Disable early stopping and always run all epochs")

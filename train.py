@@ -266,6 +266,22 @@ def train(args, model, device, dataset_name, datasets_dir):
             if "ce" in active_losses:
                 del output
             del images
+
+            log_every = int(args.get("log_every_n_iterations") or 0)
+            if log_every > 0 and (iteration + 1) % log_every == 0:
+                window = epoch_losses[-log_every:]
+                elapsed = str(datetime.now() - epoch_start_time)[:-7]
+                msg = (
+                    f"Epoch {epoch_num:02d} iter {iteration + 1}/{args['iterations_per_epoch']}, "
+                    f"{elapsed} elapsed, loss_mean(last {log_every}) = {float(np.mean(window)):.4f}"
+                )
+                if "ce" in active_losses and epoch_losses_ce:
+                    msg += f", loss_ce = {float(np.mean(epoch_losses_ce[-log_every:])):.4f}"
+                if "uncertainty" in active_losses and args["model_mode"] == "uncertainty" and epoch_losses_gnll:
+                    msg += f", loss_uncertainty = {float(np.mean(epoch_losses_gnll[-log_every:])):.4f}"
+                if args["model_mode"] == "uncertainty" and epoch_variances:
+                    msg += f", mean_variance = {float(np.mean(epoch_variances[-log_every:])):.4f}"
+                logger.info(msg)
             
             if args['dry_run']:
                 logger.info("Dry run: breaking epoch loop after one iteration")
