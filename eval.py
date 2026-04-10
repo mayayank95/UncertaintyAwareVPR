@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Dict
 
 import faiss
 import numpy as np
@@ -11,7 +12,8 @@ from tqdm import tqdm
 from configs.runtime import build_config_and_datasets, init_model, init_wandb, log_wandb_images
 from data.test_dataset import TestDataset
 from eval_metrics import visualizations
-from eval_metrics.eval_ece_sh import compute_ece, _cal_mapk
+from eval_metrics.eval_ece_sh import compute_ece, _cal_mapk, compute_ece_pairwise, plot_pairwise_ece_combined
+# from eval_metrics.pairwise_scores import get_all_pairwise_scores
 from eval_metrics.uncertainty import compute_uncertainty_correlation, compute_uncertainty_statistics
 from utils import commons, wandb_utils
 
@@ -19,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 
-def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=None, log_dataset_info=True):
+def eval_dataset(args, model, device, dataset_name, eval_ds_path, queries_folder_name="queries", 
+                 wandb_step=None, log_dataset_info=True, db_features=None):
     """
     Evaluates the model on a single dataset.
     Extracts features once, then computes Recalls and Uncertainty metrics.
@@ -34,7 +37,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
 
     test_ds = TestDataset(
         f"{eval_ds_path}/database",
-        f"{eval_ds_path}/queries",
+        f"{eval_ds_path}/{queries_folder_name}",
         positive_dist_threshold=args['positive_dist_threshold'],
         image_size=args.get('image_size'),
         use_labels=args['use_labels'],
@@ -48,24 +51,33 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
     all_descriptors = np.zeros((len(test_ds), args['descriptors_dimension']), dtype="float32")
     all_variances = np.zeros((len(test_ds), args['descriptors_dimension']), dtype="float32")
 
-    if args['dry_run']:
-        logger.info("Dry run enabled: Generating random descriptors/variances to test correlation pipeline.")
-        all_descriptors = np.random.randn(len(test_ds), args['descriptors_dimension']).astype("float32")
-        all_variances = np.abs(np.random.randn(len(test_ds), args['descriptors_dimension']).astype("float32"))
+    db_cache_found = False
+    if db_features is not None:
+        logger.info("Using in-memory cached database features.")
+        all_descriptors[:test_ds.num_database] = db_features['descriptors']
+        all_variances[:test_ds.num_database] = db_features['variances']
+        db_cache_found = True
 
     with torch.inference_mode():
-        # Database extraction
-        db_subset = Subset(test_ds, list(range(test_ds.num_database)))
-        db_loader = DataLoader(
-            db_subset, batch_size=args['infer_batch_size'], 
-            num_workers=args['num_workers'], pin_memory=(device.type == "cuda")
-        )
-        logger.debug("Extracting database features...")
-        for images, indices in tqdm(db_loader):
-            desc, var = model(images.to(device))
-            all_descriptors[indices.numpy(), :] = desc.cpu().numpy()
-            all_variances[indices.numpy(), :] = var.cpu().numpy()
-            if args["dry_run"]: break
+        # Database extraction (skip if in-memory cache found)
+        if not db_cache_found:
+            db_subset = Subset(test_ds, list(range(test_ds.num_database)))
+            db_loader = DataLoader(
+                db_subset, batch_size=args['infer_batch_size'], 
+                num_workers=args['num_workers'], pin_memory=(device.type == "cuda")
+            )
+            logger.debug("Extracting database features...")
+            for images, indices in tqdm(db_loader):
+                desc, var = model(images.to(device))
+                all_descriptors[indices.numpy(), :] = desc.cpu().numpy()
+                all_variances[indices.numpy(), :] = var.cpu().numpy()
+                if args["dry_run"]: break
+            
+            # Prepare for sharing with subsequent query folders in the same run
+            db_features = {
+                'descriptors': all_descriptors[:test_ds.num_database].copy(),
+                'variances': all_variances[:test_ds.num_database].copy()
+            }
 
         # Query extraction
         q_subset = Subset(test_ds, list(range(test_ds.num_database, test_ds.num_database + test_ds.num_queries)))
@@ -135,13 +147,13 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             std_query_variance = float(np.std(mean_per_q))
             min_query_variance = float(np.min(mean_per_q))
             max_query_variance = float(np.max(mean_per_q))
-        save_corr_plot = args.get('save_plots', False) or args.get('use_wandb')
-        if save_corr_plot:
-            dataset_output_dir.mkdir(parents=True, exist_ok=True)
-        uncertainty_corr = compute_uncertainty_correlation(
-            args, all_descriptors, all_variances, positives_per_query, test_ds.num_database,
-            output_dir=dataset_output_dir if save_corr_plot else None,
-        )
+        # save_corr_plot = args.get('save_plots', False) or args.get('use_wandb')
+        # if save_corr_plot:
+        #     dataset_output_dir.mkdir(parents=True, exist_ok=True)
+        # uncertainty_corr = compute_uncertainty_correlation(
+        #     args, all_descriptors, all_variances, positives_per_query, test_ds.num_database,
+        #     output_dir=dataset_output_dir if save_corr_plot else None,
+        # )
         if args['use_labels'] and positives_per_query is not None:
             q_variances = all_variances[test_ds.num_database:]
             if args['dry_run']:
@@ -161,6 +173,52 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
                 distances=distances,
                 uncertainty_loss=args.get('uncertainty_loss', 'gaussian_nll'),
             )
+            
+            # # --- Pairwise ECE (reliability of similarity scores vs. hit rate in top-K) ---
+            # pm = args.get("pairwise_metrics") or []
+            # if pm:
+            #     q_kappa = None
+            #     db_kappa = None
+            #     if "jrl" in pm and args.get("uncertainty_loss") == "vmf":
+            #         # Same rows as FAISS (dry_run slices q_desc/db_desc; κ must match distances shape).
+            #         nq = q_desc.shape[0]
+            #         ndb = db_desc.shape[0]
+            #         q_kappa = np.mean(
+            #             all_variances[test_ds.num_database : test_ds.num_database + nq], axis=1
+            #         )
+            #         db_kappa = np.mean(all_variances[:ndb], axis=1)
+            #     elif "jrl" in pm:
+            #         logger.warning(
+            #             "pairwise_metrics includes 'jrl' but uncertainty_loss is not 'vmf'; "
+            #             "skipping jrl (requires query/database concentrations)."
+            #         )
+
+            #     all_pw = get_all_pairwise_scores(
+            #         distances, predictions, q_kappa=q_kappa, db_kappa=db_kappa
+            #     )
+            #     scores_p = {v: all_pw[v] for v in pm if v in all_pw}
+
+            #     pairwise_series = []
+            #     for variant, sp in scores_p.items():
+            #         ece_p_result = compute_ece_pairwise(
+            #             sp,
+            #             predictions,
+            #             positives_per_query,
+            #             output_dir=dataset_output_dir if save_ece_plot else None,
+            #             save_plot=False,
+            #         )
+            #         if ece_result is not None:
+            #             ece_result[f"ece_pairwise_{variant}"] = ece_p_result
+            #         pairwise_series.append((variant, ece_p_result))
+
+            #     if pairwise_series and save_ece_plot:
+            #         plot_pairwise_ece_combined(
+            #             pairwise_series,
+            #             dataset_output_dir,
+            #             plot_name="ece_pairwise.png",
+            #             title=f"Pairwise calibration ({dataset_name})",
+            #         )
+
     # --- 4. Visualizations & Plots ---
     save_plots = args.get("save_plots", False) or args.get("use_wandb", False)
 
@@ -191,8 +249,8 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             logger.warning("Output path %s exists as a file; skipping variance distribution plot.", dataset_output_dir)
         else:
             dataset_output_dir.mkdir(parents=True, exist_ok=True)
-            if uncertainty_corr is not None and save_plots:
-                logger.info(f"Uncertainty Spearman Correlation: {uncertainty_corr:.4f}")
+            # if uncertainty_corr is not None and save_plots:
+            #     logger.info(f"Uncertainty Spearman Correlation: {uncertainty_corr:.4f}")
             compute_uncertainty_statistics(
                 all_variances,
                 dataset_output_dir,
@@ -204,6 +262,14 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
     # Flat keys (val/loss total, ece/recall_01, ...) when wandb_step is set so train.py time-series graphs get data.
     prefix = f"Eval_{dataset_name}/"
     wandb_metrics = {}
+    rv = args.get("recall_values", [1, 5, 10, 20])
+    for k in sorted(rv):
+        i = rv.index(k)
+        if i < len(recalls):
+            wandb_metrics[f"{prefix}recall_{k:02d}"] = float(recalls[i])
+            if map_at_k is not None and i < len(map_at_k):
+                wandb_metrics[f"{prefix}map_{k:02d}"] = float(map_at_k[i])
+    
     if ece_result:
         if "ece_recall" in ece_result:
             for n, v in ece_result["ece_recall"].items():
@@ -221,6 +287,14 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             wandb_metrics[f"{prefix}ece_ap"] = float(ece_result["ece_ap"])
             if wandb_step is not None:
                 wandb_metrics["ece/ap"] = float(ece_result["ece_ap"])
+        
+        # for variant in ["l2", "jrl"]:
+        #     key = f"ece_pairwise_{variant}"
+        #     if key in ece_result:
+        #         val = float(ece_result[key]["ece"])
+        #         wandb_metrics[f"{prefix}pairwise_ece_{variant}"] = val
+        #         if wandb_step is not None:
+        #             wandb_metrics[f"ece/pairwise_{variant}"] = val
 
     # Build image dict for W&B when plots exist (train: val/ece sections; eval: always for diagnostic plots)
     wandb_images = None
@@ -228,7 +302,8 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
         wandb_images = {
             f"{prefix}variance_distribution": (dataset_output_dir / "variance_distribution.png").resolve(),
             f"{prefix}ece_plot": (dataset_output_dir / "ece_plot.png").resolve(),
-            f"{prefix}uncertainty_correlation_scatter": (dataset_output_dir / "uncertainty_correlation_scatter.png").resolve(),
+            # f"{prefix}ece_pairwise": (dataset_output_dir / "ece_pairwise.png").resolve(),
+            # f"{prefix}uncertainty_correlation_scatter": (dataset_output_dir / "uncertainty_correlation_scatter.png").resolve(),
         }
         preds_dir = dataset_output_dir / "preds"
         if save_plots and preds_dir.exists():
@@ -236,7 +311,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, wandb_step=Non
             for p in sorted(preds_dir.glob("*.jpg")):
                 wandb_images[f"{prefix}predictions"].append(p)
 
-    return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images
+    return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images, db_features
 
 if __name__ == "__main__":
     # ---- Load config and datasets (shared helper) ----
@@ -256,57 +331,61 @@ if __name__ == "__main__":
         if not eval_ds_path.exists():
             eval_ds_path = datasets_paths[name]["validation"]
             logger.info(f"[{name}] 'test' folder not found, using 'val' instead.")
-        recalls, r_str, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images = eval_dataset(
-            cfg, model, device, name, eval_ds_path, wandb_step=None
-        )
 
-        wandb_utils.log_eval_dataset(
-            cfg, name, recalls, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images
-        )
+        # Look for all folders starting with "queries" or "query"
+        query_folders = sorted(list(eval_ds_path.glob("queries*")))
+        if not query_folders:
+            query_folders = sorted(list(eval_ds_path.glob("query*")))
+        
+        if not query_folders:
+            logger.warning(f"[{name}] No query folders found in {eval_ds_path}")
+            continue
+        shared_db_features = None  # Reset for each test dataset
+        for q_folder in query_folders:
+            q_folder_name = q_folder.name
+            # If there's only one folder and it's named "queries" or "query", use base name
+            # Otherwise append the folder name to distinguish them in logs/W&B
+            if len(query_folders) == 1 and q_folder_name in ["queries", "query"]:
+                display_name = name
+            else:
+                display_name = f"{name}_{q_folder_name}"
+            
+            logger.info(f"Evaluating {name} - queries folder: {q_folder_name} (as {display_name})")
 
-        # Populate W&B Summary for this dataset with the key scalar metrics.
-        if cfg.get("use_wandb"):
-            try:
-                import wandb as _wandb
-                if _wandb.run is not None:
-                    prefix = f"Eval_{name}"
-                    rv = cfg.get("recall_values", [1, 5, 10, 20])
-                    for k in sorted(rv):
-                        i = rv.index(k)
-                        _wandb.run.summary[f"{prefix}/recall_{k:02d}"] = float(recalls[i]) if i < len(recalls) else 0.0
-                        if map_at_k is not None and i < len(map_at_k):
-                            _wandb.run.summary[f"{prefix}/map_{k:02d}"] = float(map_at_k[i])
-                        elif map_at_k is not None:
-                            _wandb.run.summary[f"{prefix}/map_{k:02d}"] = 0.0
+            results = eval_dataset(
+                cfg, model, device, display_name, eval_ds_path, queries_folder_name=q_folder_name, 
+                wandb_step=None, db_features=shared_db_features
+            )
+            recalls, r_str, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images, shared_db_features = results
 
-                    # ECE values (already computed inside eval_dataset)
-                    for k in sorted(rv):
-                        k2 = f"{k:02d}"
-                        ecr_key = f"{prefix}/ece_recall_{k2}"
-                        if ecr_key in eval_wb:
-                            _wandb.run.summary[ecr_key] = float(eval_wb[ecr_key])
-                        ecm_key = f"{prefix}/ece_map_{k2}"
-                        if ecm_key in eval_wb:
-                            _wandb.run.summary[ecm_key] = float(eval_wb[ecm_key])
+            wandb_utils.log_eval_dataset(
+                cfg, display_name, recalls, map_at_k, corr, mean_var, std_var, min_var, max_var, eval_wb, wandb_images
+            )
 
-                    eap_key = f"{prefix}/ece_ap"
-                    if eap_key in eval_wb:
-                        _wandb.run.summary[eap_key] = float(eval_wb[eap_key])
-
-                    # Variance statistics (passed separately from eval_dataset)
-                    if corr is not None:
-                        _wandb.run.summary[f"{prefix}/uncertainty_correlation"] = float(corr)
-                    if mean_var is not None:
-                        _wandb.run.summary[f"{prefix}/variance_mean"] = float(mean_var)
-                    if std_var is not None:
-                        _wandb.run.summary[f"{prefix}/variance_std"] = float(std_var)
-                    if min_var is not None:
-                        _wandb.run.summary[f"{prefix}/variance_min"] = float(min_var)
-                    if max_var is not None:
-                        _wandb.run.summary[f"{prefix}/variance_max"] = float(max_var)
-            except Exception:
-                # Best-effort only; don't fail evaluation due to summary writing.
-                pass
+            # Populate W&B Summary for this dataset with the key scalar metrics.
+            if cfg.get("use_wandb"):
+                try:
+                    import wandb as _wandb
+                    if _wandb.run is not None:
+                        # 1. Log all scalar metrics returned by eval_dataset (includes recalls, mAP, ECE)
+                        for k, v in eval_wb.items():
+                            _wandb.run.summary[k] = v
+                        
+                        # 2. Log additional evaluation statistics
+                        prefix = f"Eval_{display_name}"
+                        # if corr is not None:
+                        #     _wandb.run.summary[f"{prefix}/uncertainty_correlation"] = float(corr)
+                        if mean_var is not None:
+                            _wandb.run.summary[f"{prefix}/variance_mean"] = float(mean_var)
+                        if std_var is not None:
+                            _wandb.run.summary[f"{prefix}/variance_std"] = float(std_var)
+                        if min_var is not None:
+                            _wandb.run.summary[f"{prefix}/variance_min"] = float(min_var)
+                        if max_var is not None:
+                            _wandb.run.summary[f"{prefix}/variance_max"] = float(max_var)
+                except Exception:
+                    # Best-effort only; don't fail evaluation due to summary writing.
+                    pass
 
     logger.info("=" * 30 + "\nAll processes finished.")
     wandb_utils.finish_run(cfg)

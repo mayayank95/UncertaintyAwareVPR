@@ -5,6 +5,7 @@ import logging
 import numpy as np
 from pathlib import Path
 import shutil
+import hashlib
 
 
 class InfiniteDataLoader(torch.utils.data.DataLoader):
@@ -81,3 +82,22 @@ def copy_resume_model_to_log_dir(cfg, logger: logging.Logger):
         logger.debug(f"Copied resume model from {src} to {log_dir}")
     except Exception as e:
         logger.error(f"Failed to copy resume model from {src} to {log_dir}: {e}")
+
+def get_cache_path(base_folder, sub_path, filename):
+    """Try to get a path in the base_folder/cache, or fallback to local project/cache."""
+    # 1. Try dataset-local cache
+    try_path = Path(base_folder) / "cache" / sub_path / filename
+    try:
+        try_path.parent.mkdir(parents=True, exist_ok=True)
+        # Check if we can actually write here
+        test_file = try_path.parent / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        return try_path
+    except (PermissionError, OSError):
+        # 2. Fallback to project-local cache
+        project_root = Path(__file__).resolve().parent.parent
+        path_hash = hashlib.md5(str(base_folder).encode()).hexdigest()[:8]
+        fallback_dir = project_root / "cache" / path_hash / sub_path
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        return fallback_dir / filename

@@ -160,8 +160,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="recall",
         help="ECE metrics to compute (comma-separated). Default: recall only. "
-             "Add map and/or ap as needed, e.g. 'recall,map' or 'recall,map,ap'.",
+             "Options: recall, map, ap. calibration uses --pairwise_metrics instead.",
     )
+    
+    # p.add_argument("--pairwise_metrics", type=str, default=None,
+    #                help="Pairwise ECE variants: l2, jrl (comma-separated). l2 uses FAISS L2^2; jrl needs "
+    #                     "uncertainty_loss=vmf. Plot: ece_pairwise.png.")
 
     return p.parse_args()
     
@@ -211,6 +215,25 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
             out["ece_metrics"] = [str(x).strip().lower() for x in v if str(x).strip()]
         else:
             out["ece_metrics"] = [s.strip().lower() for s in str(v).split(",") if s.strip()]
+
+    # if "pairwise_metrics" in out and out["pairwise_metrics"] is not None:
+    #     v = out["pairwise_metrics"]
+    #     if isinstance(v, list):
+    #         pm = [str(x).strip().lower() for x in v if str(x).strip()]
+    #     else:
+    #         pm = [s.strip().lower() for s in str(v).split(",") if s.strip()]
+    #     allowed = frozenset({"l2", "jrl"})
+    #     for x in pm:
+    #         if x not in allowed:
+    #             raise ValueError(f"pairwise_metrics: unknown entry {x!r}; allowed: l2, jrl.")
+    #     seen = set()
+    #     canon = []
+    #     for x in pm:
+    #         if x in seen:
+    #             continue
+    #         seen.add(x)
+    #         canon.append(x)
+    #     out["pairwise_metrics"] = canon
 
     raw_es = out.get("early_stop_metric", "recall")
     out["early_stop_metrics"] = canonical_early_stop_metrics(raw_es)

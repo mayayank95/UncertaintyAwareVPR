@@ -1,4 +1,7 @@
 from glob import glob
+import pickle
+import os
+from pathlib import Path
 
 import logging
 import numpy as np
@@ -9,6 +12,7 @@ from sklearn.neighbors import NearestNeighbors
 from data.dataset_utils import read_images_paths
 
 logger = logging.getLogger(__name__)
+from utils.commons import get_cache_path
 
 class TestDataset(data.Dataset):
     def __init__(self, database_folder, queries_folder, positive_dist_threshold=25, image_size=None, use_labels=True, resize_test_imgs=False):
@@ -68,12 +72,28 @@ class TestDataset(data.Dataset):
             ).astype(float)
 
             # Find positives_per_query, which are within positive_dist_threshold (default 25 meters)
-            logger.debug("Fitting NearestNeighbors to find positives...")
-            knn = NearestNeighbors(n_jobs=-1)
-            knn.fit(self.database_utms)
-            self.positives_per_query = knn.radius_neighbors(
-                self.queries_utms, radius=positive_dist_threshold, return_distance=False
-            )
+            # Use cache if available (with fallback to local project cache)
+            cache_path = get_cache_path(queries_folder, "positives", f"dist{positive_dist_threshold}.pkl")
+            
+            if cache_path.exists():
+                logger.info(f"Using cached positives from {cache_path}")
+                with open(cache_path, "rb") as f:
+                    self.positives_per_query = pickle.load(f)
+            else:
+                logger.debug("Finding positives with NearestNeighbors (this might take a while)...")
+                knn = NearestNeighbors(n_jobs=-1)
+                knn.fit(self.database_utms)
+                self.positives_per_query = knn.radius_neighbors(
+                    self.queries_utms, radius=positive_dist_threshold, return_distance=False
+                )
+                
+                # Save to cache
+                try:
+                    with open(cache_path, "wb") as f:
+                        pickle.dump(self.positives_per_query, f)
+                    logger.info(f"Saved positives cache to {cache_path}")
+                except Exception as e:
+                    logger.warning(f"Could not save positives cache: {e}")
 
         transformations = []
         if resize_test_imgs:

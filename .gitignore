@@ -265,3 +265,6 @@ third_party/cosplace
 
 # Ignore tests folder
 tests/
+rerank_eval/
+data/path_datasets.py
+cache/
