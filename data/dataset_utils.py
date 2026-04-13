@@ -57,7 +57,18 @@ def read_images_paths(dataset_folder, get_abs_path=True):
 
     # Normalize folder path to handle trailing slashes and different OS styles
     dataset_folder = os.path.normpath(dataset_folder)
-    file_with_paths = dataset_folder + "_images_paths.txt"
+    
+    # If a .txt file is passed directly, use it as file_with_paths
+    if os.path.isfile(dataset_folder) and dataset_folder.endswith(".txt"):
+        file_with_paths = dataset_folder
+        # Infer the base dataset folder for relative path resolution
+        if dataset_folder.endswith("_images_paths.txt"):
+            dataset_folder = dataset_folder[:-len("_images_paths.txt")]
+        else:
+            # Fallback: assume the folder is the parent directory
+            dataset_folder = os.path.dirname(dataset_folder)
+    else:
+        file_with_paths = dataset_folder + "_images_paths.txt"
     
     # 1. FAST PATH: If the text file exists, read it directly (extremely fast for large datasets)
     if os.path.exists(file_with_paths):

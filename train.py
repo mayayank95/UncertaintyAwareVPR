@@ -138,7 +138,8 @@ def train(args, model, device, dataset_name, datasets_dir):
     is_resuming = args.get('resume_train') or args.get('resume_model') or args.get('method') == 'cosplace_pretrained'
     if is_resuming and args.get("debug"):
         logger.info(f"Verifying resumed/pretrained model performance on '{val_set_folder}' folder (before any training)...")
-        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _ = eval_dataset(
+        # Unpack the 11 return values from eval_dataset (ignoring the last one, db_features, during training)
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=0, log_dataset_info=False,
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
@@ -267,22 +268,6 @@ def train(args, model, device, dataset_name, datasets_dir):
                 del output
             del images
 
-            log_every = int(args.get("log_every_n_iterations") or 0)
-            if log_every > 0 and (iteration + 1) % log_every == 0:
-                window = epoch_losses[-log_every:]
-                elapsed = str(datetime.now() - epoch_start_time)[:-7]
-                msg = (
-                    f"Epoch {epoch_num:02d} iter {iteration + 1}/{args['iterations_per_epoch']}, "
-                    f"{elapsed} elapsed, loss_mean(last {log_every}) = {float(np.mean(window)):.4f}"
-                )
-                if "ce" in active_losses and epoch_losses_ce:
-                    msg += f", loss_ce = {float(np.mean(epoch_losses_ce[-log_every:])):.4f}"
-                if "uncertainty" in active_losses and args["model_mode"] == "uncertainty" and epoch_losses_gnll:
-                    msg += f", loss_uncertainty = {float(np.mean(epoch_losses_gnll[-log_every:])):.4f}"
-                if args["model_mode"] == "uncertainty" and epoch_variances:
-                    msg += f", mean_variance = {float(np.mean(epoch_variances[-log_every:])):.4f}"
-                logger.info(msg)
-            
             if args['dry_run']:
                 logger.info("Dry run: breaking epoch loop after one iteration")
                 break
@@ -308,7 +293,8 @@ def train(args, model, device, dataset_name, datasets_dir):
                         f"loss = {np.mean(epoch_losses):.4f}")
         
         # ---- Evaluate ----
-        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images = eval_dataset(
+        # Unpack the 11 return values from eval_dataset (ignoring the last one, db_features, during training)
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False,
         )
         # Track best recall@1 unconditionally for checkpoint metadata / W&B display.

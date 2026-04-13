@@ -161,7 +161,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, queries_folder
             # Respect --ece_metrics only (default from parser is recall-only).
             ece_metrics = args.get("ece_metrics")
             if not ece_metrics:
-                ece_metrics = ["recall"]
+                ece_metrics = ["recall", "map"]
             save_ece_plot = not args['dry_run'] or args.get('use_wandb')
             if save_ece_plot:
                 dataset_output_dir.mkdir(parents=True, exist_ok=True)
@@ -333,9 +333,9 @@ if __name__ == "__main__":
             logger.info(f"[{name}] 'test' folder not found, using 'val' instead.")
 
         # Look for all folders starting with "queries" or "query"
-        query_folders = sorted(list(eval_ds_path.glob("queries*")))
+        query_folders = sorted([p for p in eval_ds_path.glob("queries*") if p.is_dir()])
         if not query_folders:
-            query_folders = sorted(list(eval_ds_path.glob("query*")))
+            query_folders = sorted([p for p in eval_ds_path.glob("query*") if p.is_dir()])
         
         if not query_folders:
             logger.warning(f"[{name}] No query folders found in {eval_ds_path}")

@@ -158,14 +158,12 @@ def log_train_epoch(
         if not k.startswith("eval/") and k.startswith("val/") and k not in metrics and k not in _val_handled:
             metrics[k] = v
 
-    # ── ece/ ── recalls, then ece plot
-    for k in sorted(rv):
-        key = f"ece/recall_{k:02d}"
-        metrics[key] = float(eval_wandb_metrics.get(key, 0.0))
-    for k in sorted(rv):
-        key = f"ece/map_{k:02d}"
-        metrics[key] = float(eval_wandb_metrics.get(key, 0.0))
-    metrics["ece/ap"] = float(eval_wandb_metrics.get("ece/ap", 0.0))
+    # ── ece/ ── recalls, maps, ap, and plots
+    # Dynamically log all metrics starting with 'ece/' provided by eval_dataset
+    for key, value in eval_wandb_metrics.items():
+        if key.startswith("ece/"):
+            metrics[key] = float(value)
+    
     if "ece/ece_plot" in epoch_images and epoch_images["ece/ece_plot"] is not None:
         _merge_images_into_metrics(metrics, {"ece/ece_plot": epoch_images["ece/ece_plot"]})
 
