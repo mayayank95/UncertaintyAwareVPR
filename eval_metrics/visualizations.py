@@ -193,7 +193,7 @@ def save_file_with_paths(query_path, preds_paths, positives_paths, output_path, 
 
 
 def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_labels=True, num_preds_to_viz=None,
-               distances=None, query_variances=None, db_variances=None, all_descriptors=None):
+               distances=None, query_variances=None, db_variances=None, q_desc=None, db_desc=None):
     """For each query, save an image containing the query and its predictions,
     and a file with the paths of the query, its predictions and its positives.
 
@@ -241,14 +241,26 @@ def save_preds(predictions, eval_ds, log_dir, save_only_wrong_preds=None, use_la
             gt_indices = positives_per_query[query_index][:3] # up to 3 GT images
             if len(gt_indices) > 0:
                 gt_images_paths = [eval_ds.database_paths[idx] for idx in gt_indices]
-                if all_descriptors is not None:
-                    q_feat = all_descriptors[eval_ds.num_database + query_index]
-                    gt_feats = all_descriptors[gt_indices]
-                    # FAISS IndexFlatL2 returns squared Euclidean distance. 
-                    # Compute squared Euclidean distance for GT images to match.
-                    gt_distances = [float(np.linalg.norm(q_feat - f)**2) for f in gt_feats]
+                if q_desc is not None and db_desc is not None:
+                    q_feat = q_desc[query_index]
+                    
+                    # Ensure gt_indices are within range of db_desc (e.g. for dry runs with sliced DB)
+                    valid_gt_mask = (gt_indices < len(db_desc))
+                    if np.any(valid_gt_mask):
+                        valid_gt_indices = gt_indices[valid_gt_mask]
+                        gt_feats = db_desc[valid_gt_indices]
+                        # FAISS IndexFlatL2 returns squared Euclidean distance. 
+                        # Compute squared Euclidean distance for GT images to match.
+                        gt_distances = [float(np.linalg.norm(q_feat - f)**2) for f in gt_feats]
+                    else:
+                        gt_distances = None
                 if db_variances is not None:
-                    gt_variances = [float(np.mean(db_variances[idx])) for idx in gt_indices]
+                    # Filter for db_variances as well
+                    valid_gt_mask = (gt_indices < len(db_variances))
+                    if np.any(valid_gt_mask):
+                        gt_variances = [float(np.mean(db_variances[idx])) for idx in gt_indices[valid_gt_mask]]
+                    else:
+                        gt_variances = None
 
         q_var = float(query_variances[query_index]) if query_variances is not None else None
         # Per-prediction database item mean variances

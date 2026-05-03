@@ -181,7 +181,10 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="zoom",
         choices=["zoom", "percentile"],
-        help="ECE binning mode: 'zoom' (adaptive zoom, legacy) or 'percentile' (percentile-clamped uniform bins; method-aware clipping). Default: zoom.",
+        help="ECE binning mode: 'zoom' (adaptive zoom, legacy) or 'percentile' "
+             "(percentile bounds with default 1%% tails—two-sided p1–p99, one-sided min–p99; "
+             "scores are clipped into [lo, hi] then binned so every sample is counted). "
+             "Default: zoom.",
     )
     p.add_argument(
         "--ece_vmf_kappa_floor",

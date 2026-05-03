@@ -10,6 +10,7 @@ from tqdm import tqdm
 from configs.runtime import build_config_and_datasets, init_model, init_wandb
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
+from data.eigenplaces_dataset import EigenPlacesDataset
 from eval import eval_dataset
 from losses import cosface_loss
 from losses import uncertainty_utils
@@ -65,9 +66,16 @@ def train(args, model, device, dataset_name, datasets_dir):
 
     # ---- Datasets & classifiers ----
     groups = [TrainDataset(dataset_name, args, train_set_folder, M=args['M'], alpha=args['alpha'], N=args['N'], L=args['L'],
-                        current_group=n, min_images_per_class=args['min_images_per_class']) for n in range(args['groups_num'])]
+                    current_group=n, min_images_per_class=args['min_images_per_class']) for n in range(args['groups_num'])]
+
     # Each group has its own classifier, which depends on the number of classes in the group
-    classifiers = [cosface_loss.MarginCosineProduct(args['descriptors_dimension'], len(group)) for group in groups]
+    classifiers = [
+        cosface_loss.MarginCosineProduct(
+            args['descriptors_dimension'], len(group),
+            s=args.get('s', 100.0), m=args.get('m', 0.4),
+        )
+        for group in groups
+    ]
     classifiers_optimizers = [torch.optim.Adam(classifier.parameters(), lr=args['classifiers_lr']) for classifier in classifiers]
 
     logger.debug(f"Using {len(groups)} groups")
@@ -139,7 +147,7 @@ def train(args, model, device, dataset_name, datasets_dir):
     if is_resuming and args.get("debug"):
         logger.info(f"Verifying resumed/pretrained model performance on '{val_set_folder}' folder (before any training)...")
         # Unpack the 11 return values from eval_dataset (ignoring the last one, db_features, during training)
-        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, _ = eval_dataset(
+        init_recalls, _, init_map_at_k, init_corr, init_mean_var, init_std_var, init_min_var, init_max_var, init_eval_wandb_metrics, _, _, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=0, log_dataset_info=False,
         )
         _mv = f"{init_mean_var:.4f}" if init_mean_var is not None else "N/A"
@@ -294,7 +302,7 @@ def train(args, model, device, dataset_name, datasets_dir):
         
         # ---- Evaluate ----
         # Unpack the 11 return values from eval_dataset (ignoring the last one, db_features, during training)
-        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, _ = eval_dataset(
+        recalls, _, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, eval_wandb_metrics, eval_wandb_images, _, _ = eval_dataset(
             args, model, device, dataset_name, val_set_folder, wandb_step=epoch_num, log_dataset_info=False,
         )
         # Track best recall@1 unconditionally for checkpoint metadata / W&B display.

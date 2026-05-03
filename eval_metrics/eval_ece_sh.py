@@ -19,12 +19,23 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Learned uncertainty heads with heavy tails at both ends → two-sided percentile clipping
+# when ``bin_mode='percentile'``. Baselines (L2 / PA / SUE / L2-pairwise) always pass
+# ``percentile_two_sided=False`` explicitly at call sites.
+PERCENTILE_CLIP_PCT = 1.0  # clip 1% tail(s): two-sided → [p1, p99]; one-sided → hi at p99
+PERCENTILE_TWO_SIDED_VAR_HEAD_TYPES = frozenset({"stun_head", "vmf", "vmf_agg"})
 
-def _get_zoomed_bins(variances: np.ndarray, num_bins: int):
+
+def percentile_two_sided_from_var_head(var_head_type: Optional[str]) -> bool:
+    """True for stun_head, vmf, and vmf_agg (two-sided percentile bins); False for other heads and baselines."""
+    return bool(var_head_type and var_head_type in PERCENTILE_TWO_SIDED_VAR_HEAD_TYPES)
+
+
+def _get_zoomed_bins(variances: np.ndarray, num_bins: int, zoom_threshold: float = 0.001):
     """Equal-width bins with adaptive zoom to handle long-tailed distributions.
 
-    Iteratively narrows the upper range until the last bin has at least 0.1%
-    of the data, preventing empty high-uncertainty bins from outliers.
+    Iteratively narrows the upper range until the last bin has at least zoom_threshold%
+    of the data (default 0.1%), preventing empty high-uncertainty bins from outliers.
 
     Returns:
         indices: list of arrays, each containing query indices for that bin.
@@ -43,10 +54,75 @@ def _get_zoomed_bins(variances: np.ndarray, num_bins: int):
             else:
                 right = np.where(variances <= bins_child[i + 1])
             indices.append(np.intersect1d(left[0], right[0]))
-        if len(indices[-1]) > int(variances.shape[0] * 0.001) or k == num_bins - 2:
+        if len(indices[-1]) > int(variances.shape[0] * zoom_threshold) or k == num_bins - 2:
             break
         k += 1
+    
+    bin_sizes = [len(b) for b in indices]
+    logger.info(f"ECE Binning: zoom_k={k}, bin_sizes={bin_sizes} (threshold={int(variances.shape[0]*zoom_threshold)})")
+    
     return indices, k
+
+
+def _get_percentile_bins(variances: np.ndarray, num_bins: int,
+                          two_sided: bool = False,
+                          clip_pct: float = PERCENTILE_CLIP_PCT):
+    """Percentile bounds + clip, then uniform bins (every sample is assigned).
+
+    Percentiles define bounds ``[lo, hi]`` on the **raw** scores. Each score is then
+    ``np.clip``ped into ``[lo, hi]``, and equal-width bins are built on ``[lo, hi]``.
+    No sample is omitted: outliers are folded into the lowest/highest bins.
+
+    Args:
+        variances: 1D array of scores.
+        num_bins: number of bin edges (so num_bins - 1 actual bins).
+        two_sided: if True, ``lo``/``hi`` are the ``clip_pct`` and ``100 - clip_pct``
+            percentiles (``PERCENTILE_CLIP_PCT`` default 1.0 → 1st and 99th).
+        clip_pct: Tail fraction defining the clip window, in percent.
+            Default ``PERCENTILE_CLIP_PCT`` (1.0): one-sided uses min–(100−clip_pct);
+            two-sided uses clip_pct–(100−clip_pct).
+
+    Returns:
+        indices: list of length num_bins - 1, each entry is the array of indices in that bin.
+        k: 0 (kept for return-shape compatibility with _get_zoomed_bins).
+    """
+    if two_sided:
+        lo, hi = np.percentile(variances, [clip_pct, 100.0 - clip_pct])
+    else:
+        lo = float(np.min(variances))
+        hi = float(np.percentile(variances, 100.0 - clip_pct))
+    if hi <= lo:
+        hi = float(np.max(variances))
+    v = np.clip(np.asarray(variances, dtype=np.float64), lo, hi)
+    edges = np.linspace(lo, hi, num=num_bins)
+    indices = []
+    for i in range(num_bins - 1):
+        left = np.where(v >= edges[i])
+        if i != num_bins - 2:
+            right = np.where(v < edges[i + 1])
+        else:
+            right = np.where(v <= edges[i + 1])
+        indices.append(np.intersect1d(left[0], right[0]))
+    bin_sizes = [len(b) for b in indices]
+    n = int(variances.shape[0])
+    assigned = int(sum(bin_sizes))
+    if assigned != n:
+        logger.warning(
+            "ECE percentile bins: assigned %d/%d samples (unexpected; check for NaNs in uncertainty)",
+            assigned, n,
+        )
+    logger.info(f"ECE Binning (percentile, two_sided={two_sided}, clip-to-bounds): bin_sizes={bin_sizes} "
+                f"[lo={lo:.4g}, hi={hi:.4g}, clip_pct={clip_pct}%]")
+    return indices, 0
+
+
+def _select_bins(variances: np.ndarray, num_bins: int, bin_mode: str,
+                 zoom_threshold: float = 0.001, percentile_two_sided: bool = False):
+    """Dispatch helper: pick zoom or percentile binning based on ``bin_mode``."""
+    if bin_mode == "percentile":
+        idx, _ = _get_percentile_bins(variances, num_bins, two_sided=percentile_two_sided)
+        return idx, 0
+    return _get_zoomed_bins(variances, num_bins, zoom_threshold=zoom_threshold)
 
 
 def _cal_recall(predictions: np.ndarray, positives_per_query: List, n_values: List[int]) -> np.ndarray:
@@ -117,6 +193,11 @@ def compute_ece(
     metrics: Optional[List[str]] = None,
     distances: Optional[np.ndarray] = None,
     uncertainty_loss: str = "gaussian_nll",
+    plot_filename: str = "ece_plot.png",
+    zoom_threshold: float = 0.001,
+    bin_mode: str = "zoom",
+    vmf_kappa_floor: bool = False,
+    percentile_two_sided: bool = False,
 ) -> Dict:
     """Compute Expected Calibration Error for uncertainty-aware retrieval.
 
@@ -130,20 +211,40 @@ def compute_ece(
         metrics: list of metrics to compute: 'recall', 'map', 'ap'. Default ['recall'].
         distances: [num_queries, max_k] L2 distances per prediction. Required for 'ap'.
         uncertainty_loss: type of uncertainty loss used (e.g., 'gaussian_nll', 'vmf').
+        plot_filename: Base filename for calibration curves of the **first** metric in
+            ``metrics`` (usually recall → ``ece_plot.png``). Also writes ``{stem}_bins.png``,
+            ``{stem}_weights.png``, and extra ``{stem}_map.png`` / ``{stem}_ap.png`` when
+            those metrics are included.
+        zoom_threshold: Fraction of data required in the last bin for adaptive zoom (default 0.001).
+        bin_mode: 'zoom' (legacy, adaptive) or 'percentile' (define ``[lo, hi]`` from percentiles—
+            default 1% tails: two-sided p1–p99; one-sided min–p99—then ``np.clip`` scores into that
+            interval and form equal-width bins so every query is counted).
+        vmf_kappa_floor: when True, clip kappa < 1 to 1 before inversion (vMF only) to
+            avoid huge 1/kappa outliers from low-confidence queries.
+        percentile_two_sided: when bin_mode='percentile', use symmetric tails at both ends
+            (p_clip and p_{100-clip}) instead of only capping the upper tail at p_{100-clip}.
+            Useful when scores have outliers on both sides (e.g. stun_head, vmf, vmf_agg).
 
     Returns:
         dict with ece_recall, ece_map, ece_ap (when included), bin_*.
     """
     metrics = metrics or ["recall"]
+    logger.debug(f"compute_ece: Saving {plot_filename} to {output_dir}")
     mean_var = np.mean(query_variances, axis=-1)
     
     # For vMF, query_variances are concentration (kappa). 
     # Large kappa = High confidence (Low uncertainty).
     # We invert it to match the "higher value = higher uncertainty" logic of Gaussian variance.
     if uncertainty_loss.lower() == "vmf":
+        if vmf_kappa_floor:
+            mean_var = np.maximum(mean_var, 1.0)
         mean_var = 1.0 / (mean_var + 1e-6)
         
-    bin_indices, zoom_k = _get_zoomed_bins(mean_var, num_bins)
+    bin_indices, zoom_k = _select_bins(
+        mean_var, num_bins, bin_mode,
+        zoom_threshold=zoom_threshold,
+        percentile_two_sided=percentile_two_sided,
+    )
     num_actual_bins = num_bins - 1
     num_queries = len(mean_var)
 
@@ -192,16 +293,16 @@ def compute_ece(
     n_str = "/".join([str(n) for n in n_values])
     if "recall" in metrics:
         ece_rec_str = "/".join([f"{e:.3f}" for e in ece_recall])
-        logger.info(f"ECE_R@{n_str}: {ece_rec_str}  (zoom_k={zoom_k})  [calibration error]")
+        logger.info(f"ECE_R@{n_str}: {ece_rec_str} (variant: {plot_filename})")
     if "map" in metrics:
         ece_map_str = "/".join([f"{e:.3f}" for e in ece_map])
-        logger.info(f"ECE_mAP@{n_str}: {ece_map_str}  [calibration error]")
+        logger.info(f"ECE_mAP@{n_str}: {ece_map_str} (variant: {plot_filename})")
     if "ap" in metrics and ece_ap is not None:
-        logger.info(f"ECE_AP: {ece_ap:.3f}")
+        logger.info(f"ECE_AP: {ece_ap:.3f} (variant: {plot_filename})")
 
     if output_dir:
         _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, num_actual_bins,
-                 output_dir, metrics)
+                 output_dir, metrics, plot_filename)
 
     result = {
         "bin_recalls": bin_recalls,
@@ -218,79 +319,365 @@ def compute_ece(
     return result
 
 
-def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, num_bins, output_dir, metrics):
-    """Save ECE visualization plot."""
+def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, num_bins, output_dir, metrics, plot_filename):
+    """Save ECE figures as separate PNGs (bin histogram, weights, one file per metric curve)."""
     try:
         import matplotlib.pyplot as plt
 
-        # Count all panels: bin dist + recall + map + ap (optional) + weights
-        n_plots = 1 + (1 if "recall" in metrics else 0) + (1 if "map" in metrics else 0)
-        if "ap" in metrics and bin_ap is not None:
-            n_plots += 1
-        n_plots += 1  # weights
-        n_cols = 2
-        n_rows = (n_plots + 1) // 2
-        fig, axs = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows), squeeze=False)
-
+        out_dir = Path(output_dir)
+        stem = Path(plot_filename).stem
+        bins_png = f"{stem}_bins.png"
+        weights_png = f"{stem}_weights.png"
         x = np.arange(num_bins)
-        # Perfect calibration: metric 100% at lowest uncertainty (bin 0), 0% at highest (last bin)
         perfect_x = np.array([0, num_bins - 1])
-        perfect_y = np.array([100.0, 0.0])
-        idx = 0
+        perfect_y_pct = np.array([100.0, 0.0])
 
-        # Bin distribution
-        ax = axs[idx // n_cols, idx % n_cols]
+        saved: List[str] = []
+
+        # --- 1. Bin distribution ---
+        fig, ax = plt.subplots(figsize=(7, 5))
         ax.bar(range(num_bins), [len(b) for b in bin_indices])
         ax.set_xlabel("Uncertainty (low → high)")
         ax.set_ylabel("Number of samples")
-        idx += 1
+        ax.set_title(f"Bin distribution ({bins_png})")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(out_dir / bins_png, dpi=150)
+        plt.close(fig)
+        saved.append(bins_png)
 
-        # Recall per bin
+        # --- 2. Bin weights ---
+        fig_w, ax_w = plt.subplots(figsize=(7, 5))
+        ax_w.bar(range(num_bins), bin_weights)
+        ax_w.set_xlabel("Uncertainty (low → high)")
+        ax_w.set_ylabel("Bin weight (fraction of queries)")
+        ax_w.set_title(f"Bin weights ({weights_png})")
+        ax_w.grid(True, alpha=0.3)
+        fig_w.tight_layout()
+        fig_w.savefig(out_dir / weights_png, dpi=150)
+        plt.close(fig_w)
+        saved.append(weights_png)
+
+        # --- 3. Calibration curves: first metric uses ``plot_filename``; others use ``{stem}_<metric>.png``
+        primary_used = False
+
         if "recall" in metrics:
-            ax = axs[idx // n_cols, idx % n_cols]
-            ax.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
+            outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_recall.png"
+            fig_r, ax_r = plt.subplots(figsize=(7, 5))
+            ax_r.plot(perfect_x, perfect_y_pct, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             for i, n in enumerate(n_values):
-                ax.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
-            ax.set_xlabel("Uncertainty (low → high)")
-            ax.set_ylabel("Recall@N (%)")
-            ax.legend()
-            idx += 1
+                ax_r.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
+            ax_r.set_xlabel("Uncertainty (low → high)")
+            ax_r.set_ylabel("Recall@N (%)")
+            ax_r.set_title("Recall per bin")
+            ax_r.legend()
+            ax_r.grid(True, alpha=0.3)
+            fig_r.tight_layout()
+            fig_r.savefig(outp, dpi=150)
+            plt.close(fig_r)
+            saved.append(outp.name)
+            primary_used = True
 
-        # mAP per bin
         if "map" in metrics:
-            ax = axs[idx // n_cols, idx % n_cols]
-            ax.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
+            outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_map.png"
+            fig_m, ax_m = plt.subplots(figsize=(7, 5))
+            ax_m.plot(perfect_x, perfect_y_pct, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
             for i, n in enumerate(n_values):
-                ax.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
-            ax.set_xlabel("Uncertainty (low → high)")
-            ax.set_ylabel("mAP@N (%)")
-            ax.legend()
-            idx += 1
+                ax_m.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
+            ax_m.set_xlabel("Uncertainty (low → high)")
+            ax_m.set_ylabel("mAP@N (%)")
+            ax_m.set_title("mAP per bin")
+            ax_m.legend()
+            ax_m.grid(True, alpha=0.3)
+            fig_m.tight_layout()
+            fig_m.savefig(outp, dpi=150)
+            plt.close(fig_m)
+            saved.append(outp.name)
+            primary_used = True
 
-        # AP per bin (when included) — AP is in [0, 1]
         if "ap" in metrics and bin_ap is not None:
-            ax = axs[idx // n_cols, idx % n_cols]
-            ax.plot(perfect_x, np.array([1.0, 0.0]), "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
-            ax.plot(x, bin_ap, marker="o", label="AP")
-            ax.set_xlabel("Uncertainty (low → high)")
-            ax.set_ylabel("AP")
-            ax.legend()
-            idx += 1
+            outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_ap.png"
+            fig_a, ax_a = plt.subplots(figsize=(7, 5))
+            ax_a.plot(perfect_x, np.array([1.0, 0.0]), "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
+            ax_a.plot(x, bin_ap, marker="o", label="AP")
+            ax_a.set_xlabel("Uncertainty (low → high)")
+            ax_a.set_ylabel("AP")
+            ax_a.set_title("AP per bin")
+            ax_a.legend()
+            ax_a.grid(True, alpha=0.3)
+            fig_a.tight_layout()
+            fig_a.savefig(outp, dpi=150)
+            plt.close(fig_a)
+            saved.append(outp.name)
 
-        # Weights
-        ax = axs[idx // n_cols, idx % n_cols]
-        ax.bar(range(num_bins), bin_weights)
-        ax.set_xlabel("Uncertainty (low → high)")
-        ax.set_ylabel("Bin weight (fraction of queries)")
-        idx += 1
-
-        # Hide unused subplots
-        for j in range(idx, n_rows * n_cols):
-            axs[j // n_cols, j % n_cols].set_visible(False)
-
-        plt.tight_layout()
-        plt.savefig(Path(output_dir) / "ece_plot.png", dpi=150)
-        plt.close()
-        logger.debug(f"ECE plot saved to {output_dir}/ece_plot.png")
+        logger.debug("ECE plots saved to %s: %s", out_dir, saved)
     except ImportError:
         logger.warning("matplotlib not installed, skipping ECE plot.")
+
+
+def _pair_scores_to_uncertainty(pair_scores: np.ndarray, uncertainty_loss: str,
+                                vmf_kappa_floor: bool) -> np.ndarray:
+    """Map raw pair scores to ``uncertainty`` (higher = more uncertain), shape preserved."""
+    ps = pair_scores.astype(np.float64, copy=False)
+    if uncertainty_loss.lower() == "vmf":
+        # Joint-kappa S / concentration-like scores: higher score → more confident.
+        # vmf_kappa_floor applies to κ-like inputs; for resultant S it is usually left False.
+        if vmf_kappa_floor:
+            ps = np.maximum(ps, 1.0)
+        return 1.0 / (ps + 1e-6)
+    # L2 / Gaussian-style: larger distance → more uncertain
+    return ps
+
+
+def _pairwise_flat_pool(
+    predictions: np.ndarray,
+    positives_per_query: List,
+    uncertainty_2d: np.ndarray,
+    n_rank: int,
+):
+    """Collect rank positions 0 .. n_rank-1 into flat uncertainty + binary GT-hit labels."""
+    n_q, k_max = predictions.shape
+    us, ys = [], []
+    k_lim = min(n_rank, k_max)
+    for q in range(n_q):
+        pos = positives_per_query[q]
+        for k in range(k_lim):
+            us.append(float(uncertainty_2d[q, k]))
+            pid = predictions[q, k]
+            ys.append(1.0 if np.any(np.isin(pid, pos)) else 0.0)
+    return np.asarray(us, dtype=np.float64), np.asarray(ys, dtype=np.float64)
+
+
+def compute_ece_pairwise(
+    predictions: np.ndarray,
+    positives_per_query: List,
+    pair_scores: np.ndarray,
+    n_values: Optional[List[int]] = None,
+    num_bins: int = 11,
+    output_dir: Optional[Path] = None,
+    plot_filename: str = "ece_pairwise.png",
+    zoom_threshold: float = 0.001,
+    bin_mode: str = "zoom",
+    uncertainty_loss: str = "gaussian_nll",
+    vmf_kappa_floor: bool = False,
+    percentile_two_sided: bool = False,
+    metrics: Optional[List[str]] = None,
+) -> Dict:
+    """Match-level calibration: bin each retrieved pair (Q, R) by U_{Q↔R}.
+
+    For each recall cutoff N in ``n_values``, pool all pairs at ranks 1..N (i.e. columns
+    0..N-1), bin them by uncertainty, and measure acc(B_i) = fraction of pairs that are
+    ground-truth positives. ECE uses the same linear perfect-calibration target as
+    ``compute_ece`` (1.0 at low-uncertainty bins → 0.0 at high).
+
+    Logs::
+        Pairwise ECE_R@1/5/10/20: ... (variant: <plot_filename>)
+
+    Returns a dict compatible with ``compute_ece`` (``ece_recall`` / ``ece_map`` keys).
+    """
+    metrics = metrics or ["recall"]
+    n_values = n_values or [1, 5, 10]
+
+    if pair_scores.shape != predictions.shape:
+        raise ValueError(
+            f"pair_scores shape {pair_scores.shape} must match predictions {predictions.shape}"
+        )
+
+    U = _pair_scores_to_uncertainty(pair_scores, uncertainty_loss, vmf_kappa_floor)
+    num_actual_bins = num_bins - 1
+
+    ece_recall = np.zeros(len(n_values))
+    ece_map = np.zeros(len(n_values))
+
+    # For plotting: per–Top-K bin assignments (boundaries differ per pool); curves overlay all R@N.
+    bin_indices_per_n: List[Optional[List[np.ndarray]]] = []
+    bin_accs_all: List[np.ndarray] = []
+
+    for ni, n in enumerate(n_values):
+        u_flat, y_flat = _pairwise_flat_pool(predictions, positives_per_query, U, n)
+        t = len(u_flat)
+        if t == 0:
+            bin_accs_all.append(np.full(num_actual_bins, np.nan))
+            bin_indices_per_n.append(None)
+            continue
+
+        bin_indices, _ = _select_bins(
+            u_flat, num_bins, bin_mode,
+            zoom_threshold=zoom_threshold,
+            percentile_two_sided=percentile_two_sided,
+        )
+        bin_indices_per_n.append(bin_indices)
+
+        bin_accs_curve = np.full(num_actual_bins, np.nan)
+        for b, idx_in_bin in enumerate(bin_indices):
+            if len(idx_in_bin) == 0:
+                continue
+            w = len(idx_in_bin) / t
+            acc = float(np.mean(y_flat[idx_in_bin]))
+            bin_accs_curve[b] = acc
+            expected = (num_actual_bins - 1 - b) / max(num_actual_bins - 1, 1)
+            if "recall" in metrics:
+                ece_recall[ni] += w * abs(acc - expected)
+            if "map" in metrics:
+                ece_map[ni] += w * abs(acc - expected)
+
+        bin_accs_all.append(bin_accs_curve)
+
+    n_str = "/".join(str(n) for n in n_values)
+    if "recall" in metrics:
+        ece_rec_str = "/".join(f"{e:.3f}" for e in ece_recall)
+        logger.info(f"Pairwise ECE_R@{n_str}: {ece_rec_str} (variant: {plot_filename})")
+    if "map" in metrics:
+        ece_map_str = "/".join(f"{e:.3f}" for e in ece_map)
+        logger.info(f"Pairwise ECE_mAP@{n_str}: {ece_map_str} (variant: {plot_filename})")
+
+    if output_dir and bin_accs_all and any(b is not None for b in bin_indices_per_n):
+        _plot_pairwise_ece(
+            bin_indices_per_n,
+            bin_accs_all,
+            n_values,
+            num_actual_bins,
+            output_dir,
+            plot_filename,
+        )
+
+    result: Dict = {}
+    if "recall" in metrics:
+        result["ece_recall"] = {int(n): float(ece_recall[i]) for i, n in enumerate(n_values)}
+    if "map" in metrics:
+        result["ece_map"] = {int(n): float(ece_map[i]) for i, n in enumerate(n_values)}
+    return result
+
+
+def _plot_pairwise_ece(
+    bin_indices_per_n: List[Optional[List[np.ndarray]]],
+    bin_accs_per_topk: List[np.ndarray],
+    n_values: List[int],
+    num_bins: int,
+    output_dir: Path,
+    plot_filename: str,
+):
+    """Save pairwise ECE figures as separate PNGs (matches ``_plot_ece``-style splits).
+
+    - ``plot_filename``: calibration curves (Perfect + R@N lines).
+    - ``{stem}_bins.png`` / ``{stem}_weights.png``: counts / weights for the last non-empty Top-K pool
+      in ``n_values`` order (same ``_bins`` convention as before; adds ``_weights`` like ``_plot_ece``).
+    - ``{stem}_bins_rN.png`` / ``{stem}_weights_rN.png``: one pair-count / weight plot per Top-K ``N``.
+    """
+    try:
+        import matplotlib.pyplot as plt
+
+        out_dir = Path(output_dir)
+        stem = Path(plot_filename).stem
+        bins_filename = f"{stem}_bins.png"
+        weights_filename = f"{stem}_weights.png"
+        x = np.arange(1, num_bins + 1, dtype=float)
+        perfect_x = np.array([1.0, float(num_bins)])
+        perfect_y = np.array([1.0, 0.0])
+
+        def _legacy_bins_weights():
+            """Prefer last entry in ``n_values`` order with a non-empty pool."""
+            for idx in range(len(bin_indices_per_n) - 1, -1, -1):
+                b_list = bin_indices_per_n[idx]
+                if b_list is None:
+                    continue
+                t_pairs = sum(len(b) for b in b_list)
+                if t_pairs <= 0:
+                    continue
+                counts = [len(b) for b in b_list]
+                weights = [len(b) / t_pairs for b in b_list]
+                return int(n_values[idx]), counts, weights
+            return None, None, None
+
+        # --- Per–Top-K distribution images (separate file per N) ---
+        for ni, n in enumerate(n_values):
+            b_list = bin_indices_per_n[ni] if ni < len(bin_indices_per_n) else None
+            if b_list is None:
+                continue
+            t_pairs = sum(len(b) for b in b_list)
+            if t_pairs <= 0:
+                continue
+            counts = [len(b) for b in b_list]
+            weights = [len(b) / t_pairs for b in b_list]
+            bins_rn = f"{stem}_bins_r{n}.png"
+            weights_rn = f"{stem}_weights_r{n}.png"
+
+            fig_b, ax_b = plt.subplots(figsize=(7, 5))
+            ax_b.bar(x, counts, width=0.8, align="center")
+            ax_b.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+            ax_b.set_ylabel("Number of pairs")
+            ax_b.set_title(f"Bin distribution ({bins_rn})\nranks 1–{n}")
+            ax_b.set_xticks(x)
+            ax_b.grid(True, alpha=0.3)
+            fig_b.tight_layout()
+            fig_b.savefig(out_dir / bins_rn, dpi=150)
+            plt.close(fig_b)
+
+            fig_w, ax_w = plt.subplots(figsize=(7, 5))
+            ax_w.bar(x, weights, width=0.8, align="center")
+            ax_w.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+            ax_w.set_ylabel("Bin weight (fraction of pairs)")
+            ax_w.set_title(f"Bin weights ({weights_rn})\nranks 1–{n}")
+            ax_w.set_xticks(x)
+            ax_w.grid(True, alpha=0.3)
+            fig_w.tight_layout()
+            fig_w.savefig(out_dir / weights_rn, dpi=150)
+            plt.close(fig_w)
+
+        # --- Legacy filenames (W&B / scripts): last non-empty Top-K in n_values order ---
+        n_legacy, counts_l, weights_l = _legacy_bins_weights()
+        if counts_l is not None and weights_l is not None and n_legacy is not None:
+            fig1, ax1 = plt.subplots(figsize=(7, 5))
+            ax1.bar(x, counts_l, width=0.8, align="center")
+            ax1.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+            ax1.set_ylabel("Number of pairs")
+            ax1.set_title(
+                f"Bin distribution ({bins_filename})\nranks 1–{n_legacy}"
+            )
+            ax1.set_xticks(x)
+            ax1.grid(True, alpha=0.3)
+            fig1.tight_layout()
+            fig1.savefig(out_dir / bins_filename, dpi=150)
+            plt.close(fig1)
+
+            fig_w0, ax_w0 = plt.subplots(figsize=(7, 5))
+            ax_w0.bar(x, weights_l, width=0.8, align="center")
+            ax_w0.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+            ax_w0.set_ylabel("Bin weight (fraction of pairs)")
+            ax_w0.set_title(
+                f"Bin weights ({weights_filename})\nranks 1–{n_legacy}"
+            )
+            ax_w0.set_xticks(x)
+            ax_w0.grid(True, alpha=0.3)
+            fig_w0.tight_layout()
+            fig_w0.savefig(out_dir / weights_filename, dpi=150)
+            plt.close(fig_w0)
+
+        # --- Calibration curves (all Top-K on one axis) ---
+        fig2, ax2 = plt.subplots(figsize=(7, 5))
+        ax2.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
+        for i, n in enumerate(n_values):
+            if i >= len(bin_accs_per_topk):
+                break
+            curve = bin_accs_per_topk[i]
+            # Same default color cycle as _plot_ece ("Recall per bin"); do not pass color= so C0,C1,… match R@1,R@5,…
+            ax2.plot(x, curve, marker="o", linestyle="-", label=f"R@{n}", zorder=1)
+        ax2.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+        ax2.set_ylabel("Pair hit rate")
+        ax2.set_xticks(x)
+        ax2.set_ylim(-0.02, 1.02)
+        ax2.legend(loc="lower left", fontsize=9)
+        ax2.grid(True, alpha=0.3)
+        fig2.tight_layout()
+        fig2.savefig(out_dir / plot_filename, dpi=150)
+        plt.close(fig2)
+
+        logger.debug(
+            "Pairwise ECE plots saved under %s (curves: %s; bins/weights per R@N + legacy %s / %s)",
+            out_dir,
+            plot_filename,
+            bins_filename,
+            weights_filename,
+        )
+    except ImportError:
+        logger.warning("matplotlib not installed, skipping pairwise ECE plot.")
