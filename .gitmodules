@@ -1,6 +1,9 @@
-[submodule "utils/VPR-methods-evaluation"]
-	path = utils/VPR-methods-evaluation
-	url = https://github.com/gmberton/VPR-methods-evaluation.git
 [submodule "third_party/cosplace"]
 	path = third_party/cosplace
 	url = https://github.com/gmberton/CosPlace.git
+[submodule "third_party/SUE"]
+	path = third_party/SUE
+	url = https://github.com/MubarizZaffar/SUE.git
+[submodule "third_party/stun"]
+	path = third_party/stun
+	url = https://github.com/ramdrop/stun.git

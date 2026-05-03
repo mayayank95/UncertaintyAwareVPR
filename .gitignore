@@ -268,3 +268,4 @@ tests/
 rerank_eval/
 data/path_datasets.py
 cache/
+paper_figures/
