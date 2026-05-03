@@ -12,7 +12,7 @@ class VMFLikelihood(torch.nn.Module):
     def log_partition_function(self, kappa):
         """
         Approximates log(Z_d(kappa)) in a fully differentiable, numerically stable way.
-        Uses the integral of the Amos (2020) stable ratio approx for A_d(kappa):
+        Uses the integral of the Amos (1974) stable ratio approx for A_d(kappa):
         A_d(kappa) = I_{d/2}(kappa)/I_{d/2-1}(kappa) ≈ kappa / (v + sqrt(kappa^2 + v^2))
         where v = (d-1)/2. Integrating this yields the log-partition function mathematically.
         """
