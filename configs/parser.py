@@ -38,11 +38,14 @@ def parse_args() -> argparse.Namespace:
     # Resume / checkpoint
     p.add_argument("--resume_train", type=str, default=None, help="Path to training checkpoint, e.g. logs/.../last_checkpoint.pth")
     p.add_argument("--resume_model", type=str, default=None, help="Path to model weights, e.g. logs/.../best_model.pth")
+    p.add_argument("--ckpt_state_dict_key", type=str, default="model_state_dict", 
+                   help="Key for state dict in checkpoint (default: model_state_dict, common alternatives: state_dict)")
     p.add_argument("--load_classifiers", type=str, default=None, help="Path to checkpoint to load and freeze classifier weights from")
 
     # Model
     p.add_argument("--backbone", type=str, default=None, help="Backbone architecture (e.g. ResNet18, ResNet50, VGG16)")
     p.add_argument("--descriptors_dimension", type=int, default=None, help="Dimension of the output descriptor vector")
+
     p.add_argument("--method", type=str, default=None, help="Model method (e.g. cosplace, cosplace_pretrained)")
     p.add_argument("--image_size", type=int, default=None, help="Resize images to this size (square)")
     p.add_argument("--train_all_layers", action="store_true", help="Train all backbone layers (default: freeze early layers)")
@@ -93,12 +96,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--saturation", type=float, default=0.7, help="ColorJitter saturation factor")
     p.add_argument("--random_resized_crop", type=float, default=0.5, help="RandomResizedCrop minimum scale (max is 1)")
 
-    # CosPlace groups
+    # CosPlace parameters
     p.add_argument("--M", type=int, default=10, help="Size of the cell in meters")
     p.add_argument("--alpha", type=int, default=30, help="Size of the margin in degrees")
     p.add_argument("--N", type=int, default=5, help="Min number of images per place")
     p.add_argument("--L", type=int, default=2, help="Smoothing for group boundaries")
-    p.add_argument("--groups_num", type=int, default=None, help="Number of groups for CosPlace training")
+    p.add_argument("--groups_num", type=int, default=0, help="If set to 0 use N*N groups")
     p.add_argument("--min_images_per_class", type=int, default=10, help="Minimum images per class for a group to be valid")
 
     # Uncertainty
@@ -120,7 +123,7 @@ def parse_args() -> argparse.Namespace:
         help="Custom scale value for Gaussian NLL mean vectors when --gnll_mu_scale_mode=custom.",
     )
     p.add_argument("--var_head_type", type=str, default="linear",
-                   choices=["activation", "linear", "mlp", "separate_agg", "separate_linear_agg", "vmf", "vmf_agg"],
+                   choices=["activation", "linear", "mlp", "separate_agg", "separate_linear_agg", "vmf", "vmf_agg", "stun_head"],
                    help="Variance head type: 'activation' (bare activation, no trainable params), "
                         "'linear' (Linear + activation), 'mlp' (GeM + 2-layer MLP + activation), "
                         "'separate_agg' (deep copy of aggregation + activation), "
@@ -162,11 +165,29 @@ def parse_args() -> argparse.Namespace:
         help="ECE metrics to compute (comma-separated). Default: recall only. "
              "Options: recall, map, ap. calibration uses --pairwise_metrics instead.",
     )
-    
-    # p.add_argument("--pairwise_metrics", type=str, default=None,
-    #                help="Pairwise ECE variants: l2, jrl (comma-separated). l2 uses FAISS L2^2; jrl needs "
-    #                     "uncertainty_loss=vmf. Plot: ece_pairwise.png.")
-
+    p.add_argument(
+        "--skip_detailed_metrics",
+        action="store_true",
+        help="Skip expensive uncertainty AUC-PR and baseline calculations (L2, PA-score, SUE) in eval.py.",
+    )
+    p.add_argument(
+        "--ece_zoom_threshold",
+        type=float,
+        default=0.001,
+        help="Fraction of data required in the last bin for ECE adaptive zoom (default 0.001 = 0.1%).",
+    )
+    p.add_argument(
+        "--ece_bin_mode",
+        type=str,
+        default="zoom",
+        choices=["zoom", "percentile"],
+        help="ECE binning mode: 'zoom' (adaptive zoom, legacy) or 'percentile' (percentile-clamped uniform bins; method-aware clipping). Default: zoom.",
+    )
+    p.add_argument(
+        "--ece_vmf_kappa_floor",
+        action="store_true",
+        help="Enable vMF kappa flooring (kappa<1 -> 1) before ECE inversion.",
+    )
     return p.parse_args()
     
 
@@ -208,6 +229,11 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
                 out[element] = "all"
             else:
                 out[element] = [s.strip() for s in v.split(",") if s.strip()]
+
+    if out.get("groups_num") == 0 and "N" in out:
+        out["groups_num"] = out["N"] * out["N"]
+
+
 
     if "ece_metrics" in out and out["ece_metrics"] is not None:
         v = out["ece_metrics"]
@@ -287,11 +313,8 @@ def _resolve_log_dir(logs_folder: Optional[str],
             if "train" in Path(sys.argv[0]).name:
                 timestamp = datetime.now().strftime("resume_model_%Y-%m-%d_%H-%M-%S")
                 return resume_path.parent / timestamp
-            else:  # eval: fixed folder so re-runs append to the same log files
-                eval_dir = resume_path.parent / "eval"
-                if eval_dir.exists() and not eval_dir.is_dir():
-                    timestamp = datetime.now().strftime("eval_%Y-%m-%d_%H-%M-%S")
-                    eval_dir = resume_path.parent / timestamp
+            else:  # eval: fixed folder per checkpoint
+                eval_dir = resume_path.parent / "eval" / resume_path.stem
                 return eval_dir
 
     if logs_folder:
