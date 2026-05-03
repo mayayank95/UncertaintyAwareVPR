@@ -8,12 +8,12 @@ from models.model_mode import GeneralModelWrapper, deliver_model, _stable_var_in
 logger = logging.getLogger(__name__)
 
 
-def _load_weights(model: torch.nn.Module, checkpoint_path: str, skip_var_head: bool = False):
+def _load_weights(model: torch.nn.Module, checkpoint_path: str, state_dict_key: str = "model_state_dict", skip_var_head: bool = False):
     """Load model weights from a checkpoint file (strict=False to allow mismatches).
     If skip_var_head is True, do not load var_head keys (keep build-time init, e.g. var_init)."""
     logger.info(f"Loading model weights from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    state_dict = checkpoint.get("model_state_dict", checkpoint)
+    state_dict = checkpoint.get(state_dict_key, checkpoint)
     if skip_var_head:
         n_before = len(state_dict)
         state_dict = {k: v for k, v in state_dict.items() if "var_head" not in k}
@@ -55,7 +55,8 @@ def get_model(args: Dict[str, Any]) -> torch.nn.Module:
     if resume_path is not None:
         # When var_init: don't load var_head from checkpoint, then force re-init
         skip_var_head = bool(args.get("var_init"))
-        _load_weights(model, resume_path, skip_var_head=skip_var_head)
+        sdk = args.get("ckpt_state_dict_key", "model_state_dict")
+        _load_weights(model, resume_path, state_dict_key=sdk, skip_var_head=skip_var_head)
         if skip_var_head:
             root = getattr(model, "module", model)
             if hasattr(root, "var_head"):

@@ -103,6 +103,12 @@ def _build_var_head(opt, fc_output_dim, aggregation=None):
             activation,
         )
         needs_feature_map = True
+    elif var_type == "stun_head":
+        sigma_dim = opt.get("sigma_dim") or fc_output_dim
+        head = nn.Sequential(
+            nn.Linear(fc_output_dim, sigma_dim),
+            nn.Sigmoid(),
+        )
     else:
         raise ValueError(f"Unknown var_head_type: {var_type}")
 
