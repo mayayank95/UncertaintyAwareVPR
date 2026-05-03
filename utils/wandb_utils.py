@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from configs.runtime import log_wandb, save_wandb_logs
+from configs.runtime import log_wandb, save_wandb_logs, update_wandb_summary
 
 
 def _recall_values(cfg: Dict[str, Any]) -> List[int]:
@@ -62,26 +62,40 @@ def _merge_images_into_metrics(
                 metrics[key] = _wandb.Image(str(img_path))
 
 
-def _train_epoch_images_for_sections(images: Optional[Dict[str, Path]]) -> Dict[str, Path]:
-    """Map eval images to train panel sections: val/variance_distribution, ece/ece_plot (no eval/ section)."""
+def _train_epoch_images_for_sections(images: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Map eval images to train panel sections.
+    Special cases are mapped to val/ or ece/ for consistent dashboard sections.
+    All others are kept with their original prefix (usually Eval_{name}/).
+    """
     if not images:
         return {}
+    import wandb as _wandb
     out = {}
     for key, path in images.items():
+        # Handle list of images (e.g. predictions)
         if isinstance(path, list):
-            if "predictions" in key:
-                out["val/predictions"] = path
+            valid_images = [Path(p) for p in path if Path(p).exists()]
+            if valid_images:
+                # If we have a generic 'predictions' key from training setup, map it to val/
+                # Otherwise keep original prefix if it contains dataset info.
+                map_key = "val/predictions" if "predictions" in key and "/" not in key else key
+                out[map_key] = [_wandb.Image(str(p)) for p in valid_images]
             continue
             
         p = Path(path).resolve()
         if not p.exists():
             continue
-        if "variance_distribution" in key:
-            out["val/variance_distribution"] = p
-        elif "ece_plot" in key:
-            out["ece/ece_plot"] = p
-        elif "uncertainty_correlation_scatter" in key:
-            out["val/uncertainty_correlation_scatter"] = p
+        
+        # Standard mappings for the primary validation set plots
+        if "variance_distribution" in key and "/" not in key:
+            out["val/variance_distribution"] = _wandb.Image(str(p))
+        elif "ece_plot" in key and "/" not in key:
+            out["ece/ece_plot"] = _wandb.Image(str(p))
+        elif "uncertainty_correlation_scatter" in key and "/" not in key:
+            out["val/uncertainty_correlation_scatter"] = _wandb.Image(str(p))
+        else:
+            # Keep original prefix (e.g. Eval_sf_xl/ece_pa)
+            out[key] = _wandb.Image(str(p))
     return out
 
 
@@ -147,25 +161,16 @@ def log_train_epoch(
     if std_query_variance is not None:
         metrics["val/variance_std"] = float(std_query_variance)
     epoch_images = _train_epoch_images_for_sections(eval_wandb_images)
-    if "val/variance_distribution" in epoch_images and epoch_images["val/variance_distribution"] is not None:
-        _merge_images_into_metrics(metrics, {"val/variance_distribution": epoch_images["val/variance_distribution"]})
-    if "val/uncertainty_correlation_scatter" in epoch_images and epoch_images["val/uncertainty_correlation_scatter"] is not None:
-        _merge_images_into_metrics(metrics, {"val/uncertainty_correlation_scatter": epoch_images["val/uncertainty_correlation_scatter"]})
-    if "val/predictions" in epoch_images and epoch_images["val/predictions"]:
-        _merge_images_into_metrics(metrics, {"val/predictions": epoch_images["val/predictions"]})
-    _val_handled = {"val/loss_total", "val/loss"}
-    for k, v in eval_wandb_metrics.items():
-        if not k.startswith("eval/") and k.startswith("val/") and k not in metrics and k not in _val_handled:
-            metrics[k] = v
+    for key, img in epoch_images.items():
+        metrics[key] = img
 
-    # ── ece/ ── recalls, maps, ap, and plots
-    # Dynamically log all metrics starting with 'ece/' provided by eval_dataset
-    for key, value in eval_wandb_metrics.items():
-        if key.startswith("ece/"):
-            metrics[key] = float(value)
-    
-    if "ece/ece_plot" in epoch_images and epoch_images["ece/ece_plot"] is not None:
-        _merge_images_into_metrics(metrics, {"ece/ece_plot": epoch_images["ece/ece_plot"]})
+    # ── Forward all other metrics ──
+    # Forward anything that starts with 'ece/', 'val/', 'Eval_', or 'uncertainty/'
+    # that hasn't been explicitly handled yet.
+    _handled = set(metrics.keys()) | {"val/loss_total", "val/loss"}
+    for k, v in eval_wandb_metrics.items():
+        if k not in _handled:
+            metrics[k] = v
 
     log_wandb(metrics, step=epoch_num)
 
@@ -185,6 +190,14 @@ def log_eval_dataset(
 ) -> None:
     """Log evaluation metrics and images for one dataset to W&B.
 
+    Eval mode is one-shot per dataset, so scalar metrics are written to
+    `wandb.run.summary` (visible in the runs table + summary sidebar) and NOT
+    through `wandb.log`, which would otherwise create useless single-point
+    line charts that clutter the workspace.
+
+    Only media (images and HTML tables) is routed through `wandb.log` so it
+    still shows up as media panels in the workspace.
+
     Panel ordering per dataset (dict insertion order determines initial W&B layout):
       Eval_{name}/  — recalls, ECE values, ECE plot, variance distribution,
                       variance statistics, predictions
@@ -195,7 +208,9 @@ def log_eval_dataset(
 
     prefix = f"Eval_{dataset_name}"
     rv = _recall_values(cfg)
-    metrics: Dict[str, Any] = {}
+    # Scalars → run.summary only (no chart). Media → wandb.log (panel).
+    scalar_metrics: Dict[str, Any] = {}
+    media_metrics: Dict[str, Any] = {}
 
     def _html_table(headers, rows):
         style = (
@@ -227,7 +242,7 @@ def log_eval_dataset(
         i = rv.index(k)
         val = float(recalls[i]) if i < len(recalls) else 0.0
         recall_row.append(val)
-        metrics[f"{prefix}/{_recall_key(k)}"] = val
+        scalar_metrics[f"{prefix}/{_recall_key(k)}"] = val
     ret_rows.append(recall_row)
     if map_at_k is not None:
         map_row = ["mAP"]
@@ -235,9 +250,11 @@ def log_eval_dataset(
             i = rv.index(k)
             val = float(map_at_k[i]) if i < len(map_at_k) else 0.0
             map_row.append(val)
-            metrics[f"{prefix}/{_map_key(k)}"] = val
+            scalar_metrics[f"{prefix}/{_map_key(k)}"] = val
         ret_rows.append(map_row)
-    metrics[f"{prefix}/retrieval_metrics"] = _html_table(ret_headers, ret_rows)
+    # HTML table disabled (option C): numbers are already in scalar columns of
+    # the runs table; iframe panels were making the W&B workspace sluggish.
+    # media_metrics[f"{prefix}/retrieval_metrics"] = _html_table(ret_headers, ret_rows)
 
     # ── 2. ECE values ──
     ece_rows = []
@@ -249,7 +266,7 @@ def log_eval_dataset(
             key = f"Eval_{dataset_name}/ece_recall_{k:02d}"
             val = float(eval_wandb_metrics.get(key, 0.0))
             row.append(val)
-            metrics[key] = val
+            scalar_metrics[key] = val
         ece_rows.append(row)
     if has_ece_map:
         row = ["ECE mAP"]
@@ -257,16 +274,17 @@ def log_eval_dataset(
             key = f"Eval_{dataset_name}/ece_map_{k:02d}"
             val = float(eval_wandb_metrics.get(key, 0.0))
             row.append(val)
-            metrics[key] = val
+            scalar_metrics[key] = val
         ece_rows.append(row)
     ece_ap_key = f"Eval_{dataset_name}/ece_ap"
     if ece_ap_key in eval_wandb_metrics:
         val = float(eval_wandb_metrics[ece_ap_key])
         ece_rows.append(["ECE AP", val])
-        metrics[ece_ap_key] = val
+        scalar_metrics[ece_ap_key] = val
     if ece_rows:
         ece_headers = ["Metric"] + [f"@{k}" for k in sorted(rv)]
-        metrics[f"{prefix}/ece_metrics"] = _html_table(ece_headers, ece_rows)
+        # HTML table disabled (option C): see note above.
+        # media_metrics[f"{prefix}/ece_metrics"] = _html_table(ece_headers, ece_rows)
 
     # ── 3. ECE plot ──
     if eval_wandb_images:
@@ -274,7 +292,7 @@ def log_eval_dataset(
         if ece_key in eval_wandb_images:
             p = Path(eval_wandb_images[ece_key])
             if p.exists():
-                metrics[f"{prefix}/ece_plot"] = _wandb.Image(str(p))
+                media_metrics[f"{prefix}/ece_plot"] = _wandb.Image(str(p))
 
     # ── 4. Variance distribution plot ──
     if eval_wandb_images:
@@ -282,7 +300,7 @@ def log_eval_dataset(
         if var_dist_key in eval_wandb_images:
             p = Path(eval_wandb_images[var_dist_key])
             if p.exists():
-                metrics[f"{prefix}/variance_distribution"] = _wandb.Image(str(p))
+                media_metrics[f"{prefix}/variance_distribution"] = _wandb.Image(str(p))
 
     # ── 5. Variance statistics ──
     var_headers = []
@@ -290,31 +308,33 @@ def log_eval_dataset(
     if uncertainty_corr is not None:
         var_headers.append("Correlation")
         var_row.append(float(uncertainty_corr))
-        metrics[f"{prefix}/uncertainty_correlation"] = float(uncertainty_corr)
+        scalar_metrics[f"{prefix}/uncertainty_correlation"] = float(uncertainty_corr)
     if min_variance is not None:
         var_headers.append("Min")
         var_row.append(float(min_variance))
-        metrics[f"{prefix}/variance_min"] = float(min_variance)
+        scalar_metrics[f"{prefix}/variance_min"] = float(min_variance)
     if max_variance is not None:
         var_headers.append("Max")
         var_row.append(float(max_variance))
-        metrics[f"{prefix}/variance_max"] = float(max_variance)
+        scalar_metrics[f"{prefix}/variance_max"] = float(max_variance)
     if mean_variance is not None:
         var_headers.append("Mean")
         var_row.append(float(mean_variance))
-        metrics[f"{prefix}/variance_mean"] = float(mean_variance)
+        scalar_metrics[f"{prefix}/variance_mean"] = float(mean_variance)
     if std_variance is not None:
         var_headers.append("Std")
         var_row.append(float(std_variance))
-        metrics[f"{prefix}/variance_std"] = float(std_variance)
+        scalar_metrics[f"{prefix}/variance_std"] = float(std_variance)
     if var_headers:
-        metrics[f"{prefix}/variance_statistics"] = _html_table(var_headers, [var_row])
+        # HTML table disabled (option C): see note above.
+        # media_metrics[f"{prefix}/variance_statistics"] = _html_table(var_headers, [var_row])
+        pass
     if eval_wandb_images:
         scatter_key = f"Eval_{dataset_name}/uncertainty_correlation_scatter"
         if scatter_key in eval_wandb_images:
             p = Path(eval_wandb_images[scatter_key])
             if p.exists():
-                metrics[f"{prefix}/uncertainty_correlation_scatter"] = _wandb.Image(str(p))
+                media_metrics[f"{prefix}/uncertainty_correlation_scatter"] = _wandb.Image(str(p))
 
     # ── 6. Predictions visualization ──
     if eval_wandb_images:
@@ -324,14 +344,33 @@ def log_eval_dataset(
             if isinstance(img_list, list):
                 valid = [Path(p) for p in img_list if Path(p).exists()]
                 if valid:
-                    metrics[f"{prefix}/predictions"] = [_wandb.Image(str(p)) for p in valid]
+                    media_metrics[f"{prefix}/predictions"] = [_wandb.Image(str(p)) for p in valid]
 
-    # Forward any remaining scalar metrics not yet handled
+    # ── 7. Generic logging for any other images ──
+    if eval_wandb_images:
+        for key, value in eval_wandb_images.items():
+            if key in media_metrics or "predictions" in key or not key.startswith(prefix):
+                continue
+            if isinstance(value, (str, Path)):
+                p = Path(value)
+                if p.exists():
+                    media_metrics[key] = _wandb.Image(str(p))
+
+    # Forward any remaining scalar metrics not yet handled (assume scalar unless wandb media type)
+    _handled = set(scalar_metrics.keys()) | set(media_metrics.keys())
     for k, v in eval_wandb_metrics.items():
-        if k not in metrics:
-            metrics[k] = v
+        if k in _handled:
+            continue
+        if isinstance(v, (_wandb.Image, _wandb.Html)) or (isinstance(v, list) and v and isinstance(v[0], _wandb.Image)):
+            media_metrics[k] = v
+        else:
+            scalar_metrics[k] = v
 
-    log_wandb(metrics)
+    # Scalars → run.summary (runs table + summary sidebar, no workspace panel).
+    update_wandb_summary(scalar_metrics)
+    # Media → wandb.log so images/HTML tables still appear as media panels.
+    if media_metrics:
+        log_wandb(media_metrics)
 
 
 def finish_run(cfg: Dict[str, Any]) -> None:

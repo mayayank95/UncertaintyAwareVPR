@@ -140,6 +140,19 @@ def log_wandb(metrics: Dict[str, Any], step: Optional[int] = None) -> None:
         wandb.log(metrics, step=step)
 
 
+def update_wandb_summary(metrics: Dict[str, Any]) -> None:
+    """Write values directly to wandb.run.summary without creating history/panels.
+
+    Use for one-shot scalars (e.g. eval-mode metrics) that should appear in the
+    runs table and the run's Summary sidebar, but should NOT produce a
+    single-point line chart in the workspace. No-op if no run is active.
+    """
+    if wandb.run is None or not metrics:
+        return
+    for k, v in metrics.items():
+        wandb.run.summary[k] = v
+
+
 def log_wandb_images(images: Dict[str, Path], step: Optional[int] = None) -> None:
     """Log image files to W&B (e.g. plots). Keys become metric names. Skips missing files."""
     if not images or wandb.run is None:
