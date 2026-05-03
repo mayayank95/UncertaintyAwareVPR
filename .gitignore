@@ -265,7 +265,7 @@ third_party/cosplace
 
 # Ignore tests folder
 tests/
-rerank_eval/
+ideas/
 data/path_datasets.py
 cache/
 paper_figures/
