@@ -1,6 +1,6 @@
 """Expected Calibration Error (ECE) for uncertainty-aware VPR.
 
-Bins queries by predicted uncertainty (mean variance), computes recall@N and
+Bins queries by predicted uncertainty (mean variance), computes recall@K and
 mAP@N per bin, and measures how well uncertainty tracks retrieval performance.
 
 A well-calibrated model should have high recall in low-uncertainty bins and low
@@ -126,7 +126,7 @@ def _select_bins(variances: np.ndarray, num_bins: int, bin_mode: str,
 
 
 def _cal_recall(predictions: np.ndarray, positives_per_query: List, n_values: List[int]) -> np.ndarray:
-    """Compute recall@N. Returns array of shape [len(n_values)], values in [0, 100]."""
+    """Compute recall@K. Returns array of shape [len(n_values)], values in [0, 100]."""
     recalls = np.zeros(len(n_values))
     num_queries = predictions.shape[0]
     if num_queries == 0:
@@ -205,7 +205,7 @@ def compute_ece(
         predictions: [num_queries, max_k] predicted DB indices per query.
         positives_per_query: list of arrays, ground-truth positive DB indices per query.
         query_variances: [num_queries, D] variance vectors for each query.
-        n_values: recall@N values to evaluate.
+        n_values: recall@K values to evaluate.
         num_bins: number of bin edges (actual bins = num_bins - 1).
         output_dir: if provided, save ECE plot here.
         metrics: list of metrics to compute: 'recall', 'map', 'ap'. Default ['recall'].
@@ -368,7 +368,7 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
             for i, n in enumerate(n_values):
                 ax_r.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
             ax_r.set_xlabel("Uncertainty (low → high)")
-            ax_r.set_ylabel("Recall@N (%)")
+            ax_r.set_ylabel("Recall@K (%)")
             ax_r.set_title("Recall per bin")
             ax_r.legend()
             ax_r.grid(True, alpha=0.3)
@@ -385,7 +385,7 @@ def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, 
             for i, n in enumerate(n_values):
                 ax_m.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
             ax_m.set_xlabel("Uncertainty (low → high)")
-            ax_m.set_ylabel("mAP@N (%)")
+            ax_m.set_ylabel("mAP@K (%)")
             ax_m.set_title("mAP per bin")
             ax_m.legend()
             ax_m.grid(True, alpha=0.3)
@@ -489,7 +489,7 @@ def compute_ece_pairwise(
     ece_recall = np.zeros(len(n_values))
     ece_map = np.zeros(len(n_values))
 
-    # For plotting: per–Top-K bin assignments (boundaries differ per pool); curves overlay all R@N.
+    # For plotting: per–Top-K bin assignments (boundaries differ per pool); curves overlay all R@K.
     bin_indices_per_n: List[Optional[List[np.ndarray]]] = []
     bin_accs_all: List[np.ndarray] = []
 
@@ -559,10 +559,10 @@ def _plot_pairwise_ece(
 ):
     """Save pairwise ECE figures as separate PNGs (matches ``_plot_ece``-style splits).
 
-    - ``plot_filename``: calibration curves (Perfect + R@N lines).
+    - ``plot_filename``: calibration curves (Perfect + R@K lines).
     - ``{stem}_bins.png`` / ``{stem}_weights.png``: counts / weights for the last non-empty Top-K pool
       in ``n_values`` order (same ``_bins`` convention as before; adds ``_weights`` like ``_plot_ece``).
-    - ``{stem}_bins_rN.png`` / ``{stem}_weights_rN.png``: one pair-count / weight plot per Top-K ``N``.
+    - ``{stem}_bins_rK.png`` / ``{stem}_weights_rK.png``: one pair-count / weight plot per Top-K ``K``.
     """
     try:
         import matplotlib.pyplot as plt
@@ -673,7 +673,7 @@ def _plot_pairwise_ece(
         plt.close(fig2)
 
         logger.debug(
-            "Pairwise ECE plots saved under %s (curves: %s; bins/weights per R@N + legacy %s / %s)",
+            "Pairwise ECE plots saved under %s (curves: %s; bins/weights per R@K + legacy %s / %s)",
             out_dir,
             plot_filename,
             bins_filename,
