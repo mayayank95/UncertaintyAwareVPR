@@ -20,7 +20,7 @@ Git submodules under `third_party/` ([CosPlace](https://github.com/gmberton/CosP
 2. Each **entry** in the config JSON lists `name`, `src_rel`, and `dst_rel` so the code can resolve `train` / `validation` / `test` folders under that root (see `configs/datasets.json` for examples such as SF-XL, Pittsburgh-30k, MSLS, and Amstertime-style benchmarks).
 3. Evaluation expects query folders named `queries`, `queries_`*, or `query`* under the test (or validation) split.
 
-Adjust paths in a **local** copy of the config file rather than committing secrets or cluster-specific absolute paths.
+Adjust paths in a **local** copy of the config file.
 
 ## Configuration
 
