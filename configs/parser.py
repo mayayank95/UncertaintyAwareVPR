@@ -101,7 +101,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha", type=int, default=30, help="Size of the margin in degrees")
     p.add_argument("--N", type=int, default=5, help="Min number of images per place")
     p.add_argument("--L", type=int, default=2, help="Smoothing for group boundaries")
-    p.add_argument("--groups_num", type=int, default=0, help="If set to 0 use N*N groups")
+    p.add_argument(
+        "--groups_num",
+        type=int,
+        default=None,
+        help="Number of CosPlace spatial groups. Omit to use JSON config; 0 or omitted with no JSON key uses N*N.",
+    )
     p.add_argument("--min_images_per_class", type=int, default=10, help="Minimum images per class for a group to be valid")
 
     # Uncertainty
@@ -174,7 +179,7 @@ def parse_args() -> argparse.Namespace:
         "--ece_zoom_threshold",
         type=float,
         default=0.001,
-        help="Fraction of data required in the last bin for ECE adaptive zoom (default 0.001 = 0.1%).",
+        help="Fraction of data required in the last bin for ECE adaptive zoom (default 0.001 = 0.1%%).",
     )
     p.add_argument(
         "--ece_bin_mode",
@@ -217,6 +222,9 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize common fields to expected types/format."""
     out = dict(merged)
 
+    if out.get("model_mode") is None:
+        out["model_mode"] = "basic"
+
     # Paths: store as strings in config, but normalize to expanded string paths
     for k in ("data_folder", "local_data_folder", "logs_folder", "resume_train", "resume_model"):
         if k in out and out[k] is not None:
@@ -233,7 +241,7 @@ def normalize(merged: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 out[element] = [s.strip() for s in v.split(",") if s.strip()]
 
-    if out.get("groups_num") == 0 and "N" in out:
+    if out.get("groups_num") in (None, 0) and "N" in out:
         out["groups_num"] = out["N"] * out["N"]
 
 

@@ -10,7 +10,6 @@ from tqdm import tqdm
 from configs.runtime import build_config_and_datasets, init_model, init_wandb
 from data.test_dataset import TestDataset
 from data.train_dataset import TrainDataset
-from data.eigenplaces_dataset import EigenPlacesDataset
 from eval import eval_dataset
 from losses import cosface_loss
 from losses import uncertainty_utils

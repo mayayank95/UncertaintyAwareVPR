@@ -1,6 +1,6 @@
 # Virtual environments (local Python venvs; never commit)
 .venv/
-maya_vpr/
+local_venv_alt/
 kornia_env/
 __pycache__/
 *.pyc

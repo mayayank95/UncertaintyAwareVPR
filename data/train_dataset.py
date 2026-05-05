@@ -43,11 +43,11 @@ class TrainDataset(torch.utils.data.Dataset):
         # Path for dataset-specific outputs (images, descriptors)
         # dataset_output_dir = Path(args['log_dir']) / dataset_name
         # filename = f"{dataset_output_dir}/cache/{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch"
-        dataset_name = os.path.basename(dataset_folder) 
+        dataset_name = os.path.basename(dataset_folder)
         # Use the dataset folder for caching so it persists across different runs (different log_dirs)
         cache_dir = os.path.join(dataset_folder, "cache")
         filename = os.path.join(cache_dir, f"{dataset_name}_M{M}_N{N}_alpha{alpha}_L{L}_mipc{min_images_per_class}.torch")
-        
+
         if os.path.exists(filename):
             if current_group == 0:
                 logger.debug(f"Using cached dataset {filename}")
@@ -62,10 +62,12 @@ class TrainDataset(torch.utils.data.Dataset):
                 torch.save((classes_per_group, self.images_per_class), filename)
 
         if current_group >= len(classes_per_group):
-            raise ValueError(f"With this configuration there are only {len(classes_per_group)} " +
-                             f"groups, therefore I can't create the {current_group}th group. " +
-                             "You should reduce the number of groups by setting for example " +
-                             f"'--groups_num {current_group}'")
+            raise ValueError(
+                f"With this configuration there are only {len(classes_per_group)} "
+                f"groups, therefore I can't create the {current_group}th group. "
+                "You should reduce the number of groups by setting for example "
+                f"'--groups_num {current_group}'"
+            )
         self.classes_ids = classes_per_group[current_group]
         
         if self.augmentation_device == "cpu":

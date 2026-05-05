@@ -25,8 +25,8 @@ def _resolve_cached_path(dataset_folder: str, cached_path: str) -> str:
     if os.path.exists(normalized):
         return normalized
 
-    # Stale absolute path (e.g. /home/.../train/... on a different host):
-    # remap suffix after split folder name (train/val/test/database/queries).
+    # Stale absolute path from a cache file created on another machine
+    # (prefix does not exist here; recover the suffix after the split folder name):
     split_name = os.path.basename(dataset_folder.rstrip("\\/"))
     marker = f"{os.sep}{split_name}{os.sep}"
     stale_abs = os.path.normpath(normalized)

@@ -1,3 +1,4 @@
+import argparse
 import os
 from glob import glob
 
@@ -61,5 +62,10 @@ def process_datasets(root_path: str):
                         
 
 if __name__ == "__main__":
-    # Point this to your datasets root
-    process_datasets("/home/maya/Desktop/yoli/datasets")
+    p = argparse.ArgumentParser(description="Generate *_images_paths.txt files under dataset folders.")
+    p.add_argument(
+        "root",
+        type=str,
+        help="Datasets root directory (the tree your benchmarks live under)",
+    )
+    process_datasets(p.parse_args().root)

@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, List
 
 import faiss
 import numpy as np
@@ -26,6 +26,84 @@ from eval_metrics.baselines import compute_baselines
 from utils import commons, wandb_utils
 
 logger = logging.getLogger(__name__)
+
+
+def pooled_pr_auc_failure_prediction(
+    matched_top1: np.ndarray,
+    confidence_higher_is_better: np.ndarray,
+) -> float:
+    """Failure-prediction PR-AUC after **global** min–max on concatenated scores.
+
+    Same recipe as ``compute_uncertainty_aucpr`` on one benchmark: higher confidence is better;
+    normalize with min–max **over all queries together**, then PR curve.
+    """
+    y = np.asarray(matched_top1, dtype=np.float64).reshape(-1)
+    s = np.asarray(confidence_higher_is_better, dtype=np.float64).reshape(-1)
+    if y.size == 0 or s.size != y.size:
+        return float("nan")
+    lo, hi = float(np.min(s)), float(np.max(s))
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return float("nan")
+    if hi <= lo + 1e-15:
+        s_norm = np.full_like(s, 0.49995)
+    else:
+        s_norm = np.interp(s, (lo, hi), (0.0, 0.9999))
+    precision, recall, _ = precision_recall_curve(y, s_norm)
+    return float(auc(recall, precision))
+
+
+def _minmax_confidence_to_unit_interval(s: np.ndarray) -> np.ndarray:
+    """Map raw confidence (higher = more certain) to [0, 0.9999]; constant vector → midpoint."""
+    s = np.asarray(s, dtype=np.float64).reshape(-1)
+    if s.size == 0:
+        return s
+    lo, hi = float(np.min(s)), float(np.max(s))
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return np.full_like(s, 0.49995)
+    if hi <= lo + 1e-15:
+        return np.full_like(s, 0.49995)
+    return np.interp(s, (lo, hi), (0.0, 0.9999))
+
+
+def pooled_pr_auc_failure_prediction_per_dataset(
+    shards_matched: List[np.ndarray],
+    shards_confidence: List[np.ndarray],
+) -> float:
+    """Pool queries from many datasets: min–max **within each dataset**, then one PR-AUC.
+
+    Use when raw confidence scales differ across benchmarks but ranks within each are comparable.
+    """
+    if len(shards_matched) != len(shards_confidence) or not shards_matched:
+        return float("nan")
+    parts_y: List[np.ndarray] = []
+    parts_s: List[np.ndarray] = []
+    for y, s in zip(shards_matched, shards_confidence):
+        y = np.asarray(y, dtype=np.float64).reshape(-1)
+        s = np.asarray(s, dtype=np.float64).reshape(-1)
+        if y.size == 0 or y.size != s.size:
+            return float("nan")
+        parts_y.append(y)
+        parts_s.append(_minmax_confidence_to_unit_interval(s))
+    y_all = np.concatenate(parts_y)
+    s_all = np.concatenate(parts_s)
+    precision, recall, _ = precision_recall_curve(y_all, s_all)
+    return float(auc(recall, precision))
+
+
+def combined_failure_prediction_pr_auc(
+    norm_mode: str,
+    shards_matched: List[np.ndarray],
+    shards_confidence: List[np.ndarray],
+) -> float:
+    """Combined PR-AUC: ``norm_mode`` is ``per_dataset`` or ``global`` (see CLI)."""
+    mode = (norm_mode or "per_dataset").strip().lower()
+    if mode == "global":
+        if not shards_matched:
+            return float("nan")
+        y = np.concatenate([np.asarray(x, dtype=np.float64).reshape(-1) for x in shards_matched])
+        s = np.concatenate([np.asarray(x, dtype=np.float64).reshape(-1) for x in shards_confidence])
+        return pooled_pr_auc_failure_prediction(y, s)
+    return pooled_pr_auc_failure_prediction_per_dataset(shards_matched, shards_confidence)
 
 
 
@@ -458,9 +536,22 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, queries_folder
 
     # Build aggregation data for combined ECE across datasets
     aggregation_data = None
-    if (args['model_mode'] == "uncertainty" and args['use_labels'] 
+    if (args['model_mode'] == "uncertainty" and args['use_labels']
             and positives_per_query is not None and not args['dry_run']):
         q_variances_agg = all_variances[test_ds.num_database:]
+        # Always expose query κ / variance means so pooled metrics can run; merge joint κ scores when computed.
+        uncertainty_raw: Dict[str, Any] = {
+            "kappa": np.mean(q_variances_agg, axis=-1),
+            "joint_kappa": None,
+            "joint_kappa_pairwise": None,
+        }
+        if uncertainty_aucpr and uncertainty_aucpr.get("raw_scores"):
+            rs = uncertainty_aucpr["raw_scores"]
+            if rs.get("joint_kappa") is not None:
+                uncertainty_raw["joint_kappa"] = rs["joint_kappa"]
+            if rs.get("joint_kappa_pairwise") is not None:
+                uncertainty_raw["joint_kappa_pairwise"] = rs["joint_kappa_pairwise"]
+
         aggregation_data = {
             "name": dataset_name,
             "predictions": predictions,
@@ -468,7 +559,7 @@ def eval_dataset(args, model, device, dataset_name, eval_ds_path, queries_folder
             "q_variances": q_variances_agg,
             "distances": distances,
             "baseline_raw": baseline_results.get("raw_scores") if baseline_results else None,
-            "uncertainty_raw": uncertainty_aucpr.get("raw_scores") if uncertainty_aucpr else None,
+            "uncertainty_raw": uncertainty_raw,
         }
 
     return recalls, recalls_str, map_at_k, uncertainty_corr, mean_query_variance, std_query_variance, min_query_variance, max_query_variance, wandb_metrics, wandb_images, db_features, aggregation_data
@@ -554,17 +645,31 @@ if __name__ == "__main__":
                     pass
 
     def _compute_and_log_combined(agg_data_list, output_subdir, plot_prefix, wandb_prefix):
+        """Pool shards with DB index offsets; report AUC-PR with per-dataset vs global score normalization."""
         combined_variances = np.vstack([d["q_variances"] for d in agg_data_list])
         combined_distances = np.vstack([d["distances"] for d in agg_data_list])
+        ece_metrics = cfg.get("ece_metrics") or ["recall"]
+        uncertainty_loss = cfg.get('uncertainty_loss', 'gaussian_nll')
 
         combined_predictions_list = []
         combined_positives = []
         combined_matched = []
+        kappa_sh_matched: List[np.ndarray] = []
+        kappa_sh_conf: List[np.ndarray] = []
         db_offset = 0
         for d in agg_data_list:
             preds = d["predictions"]
             positives = d["positives_per_query"]
             max_db_idx = int(preds.max()) + 1 if len(preds) > 0 else 0
+            nq = preds.shape[0]
+            matched_vec = np.array(
+                [float(np.any(np.isin(preds[i, :1], positives[i]))) for i in range(nq)],
+                dtype=np.float64,
+            )
+            mean_var_shard = np.mean(d["q_variances"], axis=-1)
+            kconf_shard = mean_var_shard if uncertainty_loss.lower() == "vmf" else -mean_var_shard
+            kappa_sh_matched.append(matched_vec)
+            kappa_sh_conf.append(kconf_shard)
 
             combined_predictions_list.append(preds + db_offset)
             for i, pos_list in enumerate(positives):
@@ -579,9 +684,6 @@ if __name__ == "__main__":
 
         combined_output_dir = Path(cfg['log_dir']) / "eval" / output_subdir
         combined_output_dir.mkdir(parents=True, exist_ok=True)
-
-        ece_metrics = cfg.get("ece_metrics") or ["recall"]
-        uncertainty_loss = cfg.get('uncertainty_loss', 'gaussian_nll')
 
         combined_ece = compute_ece(
             combined_predictions, combined_positives, combined_variances,
@@ -609,10 +711,13 @@ if __name__ == "__main__":
                 combined_summary[f"recall_{k_val:02d}"] = float(v)
 
         combined_mean_var = np.mean(combined_variances, axis=-1)
-        kappa_scores = combined_mean_var if uncertainty_loss.lower() == "vmf" else -combined_mean_var
-        kappa_norm = np.interp(kappa_scores, (kappa_scores.min(), kappa_scores.max()), (0.0, 0.9999))
-        p, r, _ = precision_recall_curve(combined_matched, kappa_norm)
-        combined_summary["auc_pr_kappa"] = float(auc(r, p))
+        combined_summary["auc_pr_kappa_norm_per_dataset"] = combined_failure_prediction_pr_auc(
+            "per_dataset", kappa_sh_matched, kappa_sh_conf
+        )
+        combined_summary["auc_pr_kappa_norm_global"] = combined_failure_prediction_pr_auc(
+            "global", kappa_sh_matched, kappa_sh_conf
+        )
+        combined_summary["auc_pr_kappa"] = combined_summary["auc_pr_kappa_norm_per_dataset"]
 
         for b_name in ["l2", "pa", "sue", "sue_log"]:
             # For SUE variants, exclude amstertime from combined baseline calculation.
@@ -656,6 +761,20 @@ if __name__ == "__main__":
                 base_distances = np.vstack(base_distances)
                 base_matched = np.array(base_matched)
 
+                base_sh_matched: List[np.ndarray] = []
+                base_sh_bconf: List[np.ndarray] = []
+                for d in baseline_agg_data:
+                    preds = d["predictions"]
+                    positives = d["positives_per_query"]
+                    nqb = preds.shape[0]
+                    mv_b = np.array(
+                        [float(np.any(np.isin(preds[i, :1], positives[i]))) for i in range(nqb)],
+                        dtype=np.float64,
+                    )
+                    raw_b = np.asarray(d["baseline_raw"][b_name], dtype=np.float64).reshape(-1)
+                    base_sh_matched.append(mv_b)
+                    base_sh_bconf.append(-raw_b)
+
                 b_scores = np.concatenate([d["baseline_raw"][b_name] for d in baseline_agg_data])
                 b_ece = compute_ece(
                     base_predictions, base_positives, b_scores[:, None],
@@ -667,10 +786,13 @@ if __name__ == "__main__":
                 )
                 combined_summary[f"ece_{b_name}"] = b_ece
 
-                b_conf = -b_scores
-                b_norm = np.interp(b_conf, (b_conf.min(), b_conf.max()), (0.0, 0.9999))
-                p_b, r_b, _ = precision_recall_curve(base_matched, b_norm)
-                combined_summary[f"auc_pr_{b_name}"] = float(auc(r_b, p_b))
+                combined_summary[f"auc_pr_{b_name}_norm_per_dataset"] = combined_failure_prediction_pr_auc(
+                    "per_dataset", base_sh_matched, base_sh_bconf
+                )
+                combined_summary[f"auc_pr_{b_name}_norm_global"] = combined_failure_prediction_pr_auc(
+                    "global", base_sh_matched, base_sh_bconf
+                )
+                combined_summary[f"auc_pr_{b_name}"] = combined_summary[f"auc_pr_{b_name}_norm_per_dataset"]
 
         # Pairwise ECE on L2 top-K distances (no amstertime exclusion — follows regular L2 baseline).
         if all(
@@ -705,9 +827,26 @@ if __name__ == "__main__":
             )
             combined_summary["ece_joint_kappa"] = jk_ece
 
-            jk_norm = np.interp(jk_scores, (jk_scores.min(), jk_scores.max()), (0.0, 0.9999))
-            p_jk, r_jk, _ = precision_recall_curve(combined_matched, jk_norm)
-            combined_summary["auc_pr_joint_kappa"] = float(auc(r_jk, p_jk))
+            jk_sh_matched: List[np.ndarray] = []
+            jk_sh_scores: List[np.ndarray] = []
+            for d in agg_data_list:
+                preds = d["predictions"]
+                positives = d["positives_per_query"]
+                jk_row = np.asarray(d["uncertainty_raw"]["joint_kappa"], dtype=np.float64).reshape(-1)
+                nqj = preds.shape[0]
+                mv_j = np.array(
+                    [float(np.any(np.isin(preds[i, :1], positives[i]))) for i in range(nqj)],
+                    dtype=np.float64,
+                )
+                jk_sh_matched.append(mv_j)
+                jk_sh_scores.append(jk_row)
+            combined_summary["auc_pr_joint_kappa_norm_per_dataset"] = combined_failure_prediction_pr_auc(
+                "per_dataset", jk_sh_matched, jk_sh_scores
+            )
+            combined_summary["auc_pr_joint_kappa_norm_global"] = combined_failure_prediction_pr_auc(
+                "global", jk_sh_matched, jk_sh_scores
+            )
+            combined_summary["auc_pr_joint_kappa"] = combined_summary["auc_pr_joint_kappa_norm_per_dataset"]
 
         # Pairwise ECE on joint-kappa top-K S values.
         if all(
@@ -729,6 +868,26 @@ if __name__ == "__main__":
                 percentile_two_sided=percentile_two_sided_from_var_head(cfg.get("var_head_type")),
             )
             combined_summary["ece_joint_kappa_pairwise"] = jk_pw_ece
+
+        # --- Combined AUC-PR (already computed above): log explicitly ---
+        auc_pr_parts = [
+            f"{k}={float(v):.4f}"
+            for k, v in sorted(combined_summary.items())
+            if k.startswith("auc_pr") and isinstance(v, (float, int))
+        ]
+        if auc_pr_parts:
+            logger.info(
+                "%s: AUC-PR (_norm_per_dataset vs _norm_global): %s",
+                output_subdir,
+                ", ".join(auc_pr_parts),
+            )
+        if len(combined_matched):
+            pos_rate = float(np.mean(combined_matched))
+            logger.info(
+                "%s: top-1 positive rate (combined) = %.4f (random classifier ≈ this area under PR)",
+                output_subdir,
+                pos_rate,
+            )
 
         try:
             import matplotlib.pyplot as plt
@@ -854,6 +1013,32 @@ if __name__ == "__main__":
         if len(combined_all) > 1:
             logger.info("=" * 30 + "\nComputing combined_all (sfxl all, pitts30, msls-query, amstertime)...")
             _compute_and_log_combined(combined_all, "combined_all", "ece_combined_all", "Eval_combined_all")
+
+        # Amstertime + MSLS val-query only (run with --datasets amstertime,msls-val).
+        combined_amst_msls: List[Dict[str, Any]] = []
+        for d in all_agg_data:
+            bn = (d.get("base_dataset_name") or "").lower().replace("_", "-")
+            qf = d.get("query_folder_name")
+            if bn == "amstertime":
+                combined_amst_msls.append(d)
+            elif bn == "msls-val" and qf == "query":
+                combined_amst_msls.append(d)
+        _has_amst = any(
+            (x.get("base_dataset_name") or "").lower().replace("_", "-") == "amstertime"
+            for x in combined_amst_msls
+        )
+        _has_msls_val = any(
+            (x.get("base_dataset_name") or "").lower().replace("_", "-") == "msls-val"
+            for x in combined_amst_msls
+        )
+        if _has_amst and _has_msls_val and len(combined_amst_msls) > 1:
+            logger.info("=" * 30 + "\nComputing combined_amstertime_msls_val ...")
+            _compute_and_log_combined(
+                combined_amst_msls,
+                "combined_amstertime_msls_val",
+                "ece_combined_amstertime_msls_val",
+                "Eval_combined_amstertime_msls_val",
+            )
 
         # --- Other calculations in comment as requested ---
         """
