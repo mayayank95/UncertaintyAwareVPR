@@ -17,7 +17,7 @@ Git submodules under `third_party/` ([CosPlace](https://github.com/gmberton/CosP
 ## Data layout
 
 1. Point `data_folder` (and optionally `local_data_folder` for Colab) in your config to the directory that contains your datasets.
-2. Each **entry** in the config JSON lists `name`, `src_rel`, and `dst_rel` so the code can resolve `train` / `validation` / `test` folders under that root (see `configs/datasets.json` for examples such as SF-XL, Pittsburgh-30k, MSLS, Nordland, St Lucia, and Amstertime-style benchmarks).
+2. Each **entry** in the config JSON lists `name`, `src_rel`, and `dst_rel` so the code can resolve `train` / `validation` / `test` folders under that root (see `configs/datasets.json` for examples such as SF-XL, Pittsburgh-30k, MSLS, and Amstertime-style benchmarks).
 3. Evaluation expects query folders named `queries`, `queries_`*, or `query`* under the test (or validation) split.
 
 Adjust paths in a **local** copy of the config file rather than committing secrets or cluster-specific absolute paths.
