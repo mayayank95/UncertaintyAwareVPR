@@ -1,6 +1,6 @@
 # KappaPlace
 
-**KappaPlace** is a research framework for visual place recognition that models uncertainty in learned embeddings to improve performance and provide calibrated confidence scores under challenging real-world conditions. The framework builds on [CosPlace](https://github.com/gmberton/CosPlace)-style training and adds learned per-descriptor uncertainty so you can evaluate retrieval quality together with **calibration** (expected calibration error, ECE) under challenging conditions.
+**KappaPlace** is a research framework for visual place recognition that models uncertainty in learned embeddings to improve performance and provide calibrated confidence scores under challenging real-world conditions. The framework builds on [CosPlace](https://github.com/gmberton/CosPlace)-style training and adds learned per-descriptor uncertainty so can evaluate retrieval quality together with **calibration** (expected calibration error, ECE) under challenging conditions.
 
 ## Features
 
