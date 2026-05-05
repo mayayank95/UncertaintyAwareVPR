@@ -6,7 +6,7 @@
   "entries": [
     { "name": "sf_xl", "src_rel": "SF-XL/small", "dst_rel": "SF-XL/small" },
     { "name": "st_lucia", "src_rel": "st_lucia", "dst_rel": "st_lucia" },
-    { "name": "Pitts30K", "src_rel": "Pitts30K", "dst_rel": "Pitts30K" },
+    { "name": "pitts30k", "src_rel": "pitts30k/images", "dst_rel": "pitts30k/images" },
     { "name": "amstertime", "src_rel": "amstertime", "dst_rel": "amstertime" },
     { "name": "nordland", "src_rel": "nordland", "dst_rel": "nordland" },
     { "name": "msls-val", "src_rel": "msls-val", "dst_rel": "msls-val" }
