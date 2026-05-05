@@ -5,7 +5,7 @@
 ## Features
 
 - **Config-first CLI**: JSON defaults (`--config`) merged with command-line overrides (see `configs/parser.py`).
-- **Models**: `cosplace` (train from scratch) and `cosplace_pretrained` (backbone weights from `torch.hub`).
+- **Models**: `cosplace` (train from scratch).
 - **Uncertainty modes** (`--model_mode uncertainty`): variance heads (`--var_head_type`), optional uncertainty losses (`gaussian_nll`, `vmf`), combined with CosFace-style supervision (`--losses`).
 - **Evaluation** (`eval.py`): recalls @K, mAP, ECE variants, uncertainty statistics, optional W&B logging and plots (`--save_plots`).
 - **Optional logging**: [Weights & Biases](https://wandb.ai) via `--use_wandb`.
