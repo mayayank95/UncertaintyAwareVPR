@@ -18,7 +18,7 @@ Git submodules under `third_party/` ([CosPlace](https://github.com/gmberton/CosP
 
 1. Point `data_folder` (and optionally `local_data_folder` for Colab) in your config to the directory that contains your datasets.
 2. Each **entry** in the config JSON lists `name`, `src_rel`, and `dst_rel` so the code can resolve `train` / `validation` / `test` folders under that root (see `configs/datasets.json` for examples such as SF-XL, Pittsburgh-30k, MSLS, Nordland, St Lucia, and Amstertime-style benchmarks).
-3. Evaluation expects query folders named `queries`, `queries_`*, or `query*` under the test (or validation) split.
+3. Evaluation expects query folders named `queries`, `queries_`*, or `query`* under the test (or validation) split.
 
 Adjust paths in a **local** copy of the config file rather than committing secrets or cluster-specific absolute paths.
 
@@ -47,13 +47,6 @@ A one-step sanity check (one training iteration then exit):
 ```bash
 python train.py --config configs/datasets.json --model_mode uncertainty --losses ce,uncertainty --groups_num 8\
   --dry_run --num_workers 0
-```
-
-Enable experiment tracking:
-
-```bash
-python train.py --config configs/datasets.json --model_mode uncertainty --losses ce,uncertainty --groups_num 8\
-  --use_wandb --wandb_project KappaPlace
 ```
 
 Evaluate a checkpoint (`--model_mode` must match how the weights were trained; replace the checkpoint path). For UTM-based metrics and writing `recalls.txt` on benchmarks that embed pose in paths (e.g. Pittsburgh), add `**--use_labels**`.
