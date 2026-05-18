@@ -891,34 +891,35 @@ if __name__ == "__main__":
 
         try:
             import matplotlib.pyplot as plt
-            fig, axs = plt.subplots(1, 2, figsize=(14, 5))
-            ax = axs[0]
-            for d in agg_data_list:
-                ds_mean_var = np.mean(d["q_variances"], axis=-1)
-                ds_label = d.get("name", "unknown")
-                ax.hist(ds_mean_var, bins=50, alpha=0.5, label=f"{ds_label} (n={len(ds_mean_var)})", edgecolor="black", linewidth=0.3)
-            ax.set_xlabel("Mean kappa / variance per query")
-            ax.set_ylabel("Frequency")
-            ax.set_title("Per-dataset query uncertainty distribution")
-            ax.legend(fontsize=8)
-            ax.grid(True, alpha=0.3)
+            with plt.style.context('default'):
+                fig, axs = plt.subplots(1, 2, figsize=(14, 5))
+                ax = axs[0]
+                for d in agg_data_list:
+                    ds_mean_var = np.mean(d["q_variances"], axis=-1)
+                    ds_label = d.get("name", "unknown")
+                    ax.hist(ds_mean_var, bins=50, alpha=0.5, label=f"{ds_label} (n={len(ds_mean_var)})", edgecolor="black", linewidth=0.3)
+                ax.set_xlabel("Mean kappa / variance per query")
+                ax.set_ylabel("Frequency")
+                ax.set_title("Per-dataset query uncertainty distribution")
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3)
 
-            ax = axs[1]
-            ax.hist(combined_mean_var, bins=50, alpha=0.7, color="steelblue", edgecolor="black", linewidth=0.3)
-            ax.axvline(np.median(combined_mean_var), color="tomato", linestyle="--", linewidth=1.5,
-                       label=f"Median = {np.median(combined_mean_var):.4f}")
-            ax.axvline(np.mean(combined_mean_var), color="orange", linestyle="-", linewidth=1.5,
-                       label=f"Mean = {np.mean(combined_mean_var):.4f}")
-            ax.set_xlabel("Mean kappa / variance per query")
-            ax.set_ylabel("Frequency")
-            ax.set_title(f"Combined query uncertainty (n={len(combined_mean_var)})")
-            ax.legend(fontsize=8)
-            ax.grid(True, alpha=0.3)
+                ax = axs[1]
+                ax.hist(combined_mean_var, bins=50, alpha=0.7, color="steelblue", edgecolor="black", linewidth=0.3)
+                ax.axvline(np.median(combined_mean_var), color="tomato", linestyle="--", linewidth=1.5,
+                           label=f"Median = {np.median(combined_mean_var):.4f}")
+                ax.axvline(np.mean(combined_mean_var), color="orange", linestyle="-", linewidth=1.5,
+                           label=f"Mean = {np.mean(combined_mean_var):.4f}")
+                ax.set_xlabel("Mean kappa / variance per query")
+                ax.set_ylabel("Frequency")
+                ax.set_title(f"Combined query uncertainty (n={len(combined_mean_var)})")
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3)
 
-            plt.tight_layout()
-            dist_path = combined_output_dir / f"{output_subdir}_kappa_distribution.png"
-            plt.savefig(dist_path, dpi=150)
-            plt.close(fig)
+                plt.tight_layout()
+                dist_path = combined_output_dir / f"{output_subdir}_kappa_distribution.png"
+                plt.savefig(dist_path, dpi=150)
+                plt.close(fig)
             logger.info(f"Combined kappa distribution plot saved to {dist_path}")
         except ImportError:
             logger.warning("matplotlib not installed, skipping combined kappa distribution plot.")

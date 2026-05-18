@@ -1,7 +1,7 @@
 """Expected Calibration Error (ECE) for uncertainty-aware VPR.
 
 Bins queries by predicted uncertainty (mean variance), computes recall@K and
-mAP@N per bin, and measures how well uncertainty tracks retrieval performance.
+mAP@K per bin, and measures how well uncertainty tracks retrieval performance.
 
 A well-calibrated model should have high recall in low-uncertainty bins and low
 recall in high-uncertainty bins, with a smooth monotonic relationship.
@@ -319,98 +319,166 @@ def compute_ece(
     return result
 
 
+def _get_paper_rcparams():
+    """Return matplotlib rcParams for publication-quality fonts matching reference figure."""
+    return {
+        "font.family": "serif",
+        "font.serif": ["Computer Modern Roman", "DejaVu Serif", "Times New Roman", "Times"],
+        "mathtext.fontset": "cm",
+        "font.size": 40,
+        "axes.titlesize": 40,
+        "axes.labelsize": 48,
+        "xtick.labelsize": 40,
+        "ytick.labelsize": 40,
+        "legend.fontsize": 30,
+        "legend.frameon": True,
+    }
+
+
+# Calibration curves: thick lines + large markers (readable in slides / downsized figures).
+_ECE_DATA_LINEWIDTH = 3.0
+_ECE_REF_LINEWIDTH = 2.8
+_ECE_MARKERSIZE = 11
+
+
 def _plot_ece(bin_recalls, bin_map, bin_ap, bin_weights, bin_indices, n_values, num_bins, output_dir, metrics, plot_filename):
     """Save ECE figures as separate PNGs (bin histogram, weights, one file per metric curve)."""
     try:
         import matplotlib.pyplot as plt
+        with plt.rc_context(_get_paper_rcparams()):
+            out_dir = Path(output_dir)
+            stem = Path(plot_filename).stem
+            bins_png = f"{stem}_bins.png"
+            weights_png = f"{stem}_weights.png"
+            x = np.arange(1, num_bins + 1)
+            perfect_x = np.array([1, num_bins])
+            perfect_y_pct = np.array([100.0, 0.0])
+            even_ticks = [t for t in x if t % 2 == 0]
 
-        out_dir = Path(output_dir)
-        stem = Path(plot_filename).stem
-        bins_png = f"{stem}_bins.png"
-        weights_png = f"{stem}_weights.png"
-        x = np.arange(num_bins)
-        perfect_x = np.array([0, num_bins - 1])
-        perfect_y_pct = np.array([100.0, 0.0])
+            saved: List[str] = []
 
-        saved: List[str] = []
+            # --- 1. Bin distribution ---
+            fig, ax = plt.subplots(figsize=(12, 10))
+            ax.bar(x, [len(b) for b in bin_indices])
+            ax.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+            ax.set_ylabel("Number of samples")
+            ax.set_xticks(even_ticks)
+            ax.grid(True, alpha=0.3)
+            fig.tight_layout()
+            fig.savefig(out_dir / bins_png, dpi=300)
+            plt.close(fig)
+            saved.append(bins_png)
 
-        # --- 1. Bin distribution ---
-        fig, ax = plt.subplots(figsize=(7, 5))
-        ax.bar(range(num_bins), [len(b) for b in bin_indices])
-        ax.set_xlabel("Uncertainty (low → high)")
-        ax.set_ylabel("Number of samples")
-        ax.set_title(f"Bin distribution ({bins_png})")
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(out_dir / bins_png, dpi=150)
-        plt.close(fig)
-        saved.append(bins_png)
+            # --- 2. Bin weights ---
+            fig_w, ax_w = plt.subplots(figsize=(12, 10))
+            ax_w.bar(x, bin_weights)
+            ax_w.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+            ax_w.set_ylabel("Bin weight (fraction of queries)")
+            ax_w.set_xticks(even_ticks)
+            ax_w.grid(True, alpha=0.3)
+            fig_w.tight_layout()
+            fig_w.savefig(out_dir / weights_png, dpi=300)
+            plt.close(fig_w)
+            saved.append(weights_png)
 
-        # --- 2. Bin weights ---
-        fig_w, ax_w = plt.subplots(figsize=(7, 5))
-        ax_w.bar(range(num_bins), bin_weights)
-        ax_w.set_xlabel("Uncertainty (low → high)")
-        ax_w.set_ylabel("Bin weight (fraction of queries)")
-        ax_w.set_title(f"Bin weights ({weights_png})")
-        ax_w.grid(True, alpha=0.3)
-        fig_w.tight_layout()
-        fig_w.savefig(out_dir / weights_png, dpi=150)
-        plt.close(fig_w)
-        saved.append(weights_png)
+            # --- 3. Calibration curves: first metric uses ``plot_filename``; others use ``{stem}_<metric>.png``
+            primary_used = False
 
-        # --- 3. Calibration curves: first metric uses ``plot_filename``; others use ``{stem}_<metric>.png``
-        primary_used = False
+            if "recall" in metrics:
+                outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_recall.png"
+                fig_r, ax_r = plt.subplots(figsize=(12, 10))
+                ax_r.plot(
+                    perfect_x,
+                    perfect_y_pct,
+                    color="grey",
+                    linestyle="--",
+                    linewidth=_ECE_REF_LINEWIDTH,
+                    label="Perfect calibration",
+                    zorder=0,
+                )
+                for i, n in enumerate(n_values):
+                    ax_r.plot(
+                        x,
+                        bin_recalls[:, i],
+                        marker="o",
+                        markersize=_ECE_MARKERSIZE,
+                        linewidth=_ECE_DATA_LINEWIDTH,
+                        label=f"R@{n}",
+                    )
+                ax_r.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+                ax_r.set_ylabel("Recall@K (%)")
+                ax_r.set_xticks(even_ticks)
+                ax_r.legend(loc="lower left", prop={"weight": "bold"})
+                ax_r.grid(True, alpha=0.3)
+                fig_r.tight_layout()
+                fig_r.savefig(outp, dpi=300)
+                plt.close(fig_r)
+                saved.append(outp.name)
+                primary_used = True
 
-        if "recall" in metrics:
-            outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_recall.png"
-            fig_r, ax_r = plt.subplots(figsize=(7, 5))
-            ax_r.plot(perfect_x, perfect_y_pct, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
-            for i, n in enumerate(n_values):
-                ax_r.plot(x, bin_recalls[:, i], marker="o", label=f"R@{n}")
-            ax_r.set_xlabel("Uncertainty (low → high)")
-            ax_r.set_ylabel("Recall@K (%)")
-            ax_r.set_title("Recall per bin")
-            ax_r.legend()
-            ax_r.grid(True, alpha=0.3)
-            fig_r.tight_layout()
-            fig_r.savefig(outp, dpi=150)
-            plt.close(fig_r)
-            saved.append(outp.name)
-            primary_used = True
+            if "map" in metrics:
+                outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_map.png"
+                fig_m, ax_m = plt.subplots(figsize=(12, 10))
+                ax_m.plot(
+                    perfect_x,
+                    perfect_y_pct,
+                    color="grey",
+                    linestyle="--",
+                    linewidth=_ECE_REF_LINEWIDTH,
+                    label="Perfect calibration",
+                    zorder=0,
+                )
+                for i, n in enumerate(n_values):
+                    ax_m.plot(
+                        x,
+                        bin_map[:, i],
+                        marker="o",
+                        markersize=_ECE_MARKERSIZE,
+                        linewidth=_ECE_DATA_LINEWIDTH,
+                        label=f"mAP@{n}",
+                    )
+                ax_m.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+                ax_m.set_ylabel("mAP@K (%)")
+                ax_m.set_xticks(even_ticks)
+                ax_m.legend(loc="lower left", prop={"weight": "bold"})
+                ax_m.grid(True, alpha=0.3)
+                fig_m.tight_layout()
+                fig_m.savefig(outp, dpi=300)
+                plt.close(fig_m)
+                saved.append(outp.name)
+                primary_used = True
 
-        if "map" in metrics:
-            outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_map.png"
-            fig_m, ax_m = plt.subplots(figsize=(7, 5))
-            ax_m.plot(perfect_x, perfect_y_pct, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
-            for i, n in enumerate(n_values):
-                ax_m.plot(x, bin_map[:, i], marker="o", label=f"mAP@{n}")
-            ax_m.set_xlabel("Uncertainty (low → high)")
-            ax_m.set_ylabel("mAP@K (%)")
-            ax_m.set_title("mAP per bin")
-            ax_m.legend()
-            ax_m.grid(True, alpha=0.3)
-            fig_m.tight_layout()
-            fig_m.savefig(outp, dpi=150)
-            plt.close(fig_m)
-            saved.append(outp.name)
-            primary_used = True
+            if "ap" in metrics and bin_ap is not None:
+                outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_ap.png"
+                fig_a, ax_a = plt.subplots(figsize=(12, 10))
+                ax_a.plot(
+                    perfect_x,
+                    np.array([1.0, 0.0]),
+                    color="grey",
+                    linestyle="--",
+                    linewidth=_ECE_REF_LINEWIDTH,
+                    label="Perfect calibration",
+                    zorder=0,
+                )
+                ax_a.plot(
+                    x,
+                    bin_ap,
+                    marker="o",
+                    markersize=_ECE_MARKERSIZE,
+                    linewidth=_ECE_DATA_LINEWIDTH,
+                    label="AP",
+                )
+                ax_a.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+                ax_a.set_ylabel("AP")
+                ax_a.set_xticks(even_ticks)
+                ax_a.legend(loc="lower left", prop={"weight": "bold"})
+                ax_a.grid(True, alpha=0.3)
+                fig_a.tight_layout()
+                fig_a.savefig(outp, dpi=300)
+                plt.close(fig_a)
+                saved.append(outp.name)
 
-        if "ap" in metrics and bin_ap is not None:
-            outp = out_dir / plot_filename if not primary_used else out_dir / f"{stem}_ap.png"
-            fig_a, ax_a = plt.subplots(figsize=(7, 5))
-            ax_a.plot(perfect_x, np.array([1.0, 0.0]), "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
-            ax_a.plot(x, bin_ap, marker="o", label="AP")
-            ax_a.set_xlabel("Uncertainty (low → high)")
-            ax_a.set_ylabel("AP")
-            ax_a.set_title("AP per bin")
-            ax_a.legend()
-            ax_a.grid(True, alpha=0.3)
-            fig_a.tight_layout()
-            fig_a.savefig(outp, dpi=150)
-            plt.close(fig_a)
-            saved.append(outp.name)
-
-        logger.debug("ECE plots saved to %s: %s", out_dir, saved)
+            logger.debug("ECE plots saved to %s: %s", out_dir, saved)
     except ImportError:
         logger.warning("matplotlib not installed, skipping ECE plot.")
 
@@ -566,19 +634,33 @@ def _plot_pairwise_ece(
     """
     try:
         import matplotlib.pyplot as plt
+        with plt.rc_context(_get_paper_rcparams()):
+            out_dir = Path(output_dir)
+            stem = Path(plot_filename).stem
+            bins_filename = f"{stem}_bins.png"
+            weights_filename = f"{stem}_weights.png"
+            x = np.arange(1, num_bins + 1, dtype=float)
+            perfect_x = np.array([1.0, float(num_bins)])
+            perfect_y = np.array([1.0, 0.0])
+            even_ticks = [int(t) for t in x if int(t) % 2 == 0]
 
-        out_dir = Path(output_dir)
-        stem = Path(plot_filename).stem
-        bins_filename = f"{stem}_bins.png"
-        weights_filename = f"{stem}_weights.png"
-        x = np.arange(1, num_bins + 1, dtype=float)
-        perfect_x = np.array([1.0, float(num_bins)])
-        perfect_y = np.array([1.0, 0.0])
+            def _legacy_bins_weights():
+                """Prefer last entry in ``n_values`` order with a non-empty pool."""
+                for idx in range(len(bin_indices_per_n) - 1, -1, -1):
+                    b_list = bin_indices_per_n[idx]
+                    if b_list is None:
+                        continue
+                    t_pairs = sum(len(b) for b in b_list)
+                    if t_pairs <= 0:
+                        continue
+                    counts = [len(b) for b in b_list]
+                    weights = [len(b) / t_pairs for b in b_list]
+                    return int(n_values[idx]), counts, weights
+                return None, None, None
 
-        def _legacy_bins_weights():
-            """Prefer last entry in ``n_values`` order with a non-empty pool."""
-            for idx in range(len(bin_indices_per_n) - 1, -1, -1):
-                b_list = bin_indices_per_n[idx]
+            # --- Per–Top-K distribution images (separate file per N) ---
+            for ni, n in enumerate(n_values):
+                b_list = bin_indices_per_n[ni] if ni < len(bin_indices_per_n) else None
                 if b_list is None:
                     continue
                 t_pairs = sum(len(b) for b in b_list)
@@ -586,98 +668,94 @@ def _plot_pairwise_ece(
                     continue
                 counts = [len(b) for b in b_list]
                 weights = [len(b) / t_pairs for b in b_list]
-                return int(n_values[idx]), counts, weights
-            return None, None, None
+                bins_rn = f"{stem}_bins_r{n}.png"
+                weights_rn = f"{stem}_weights_r{n}.png"
 
-        # --- Per–Top-K distribution images (separate file per N) ---
-        for ni, n in enumerate(n_values):
-            b_list = bin_indices_per_n[ni] if ni < len(bin_indices_per_n) else None
-            if b_list is None:
-                continue
-            t_pairs = sum(len(b) for b in b_list)
-            if t_pairs <= 0:
-                continue
-            counts = [len(b) for b in b_list]
-            weights = [len(b) / t_pairs for b in b_list]
-            bins_rn = f"{stem}_bins_r{n}.png"
-            weights_rn = f"{stem}_weights_r{n}.png"
+                fig_b, ax_b = plt.subplots(figsize=(12, 10))
+                ax_b.bar(x, counts, width=0.8, align="center")
+                ax_b.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+                ax_b.set_ylabel("Number of pairs")
+                ax_b.set_xticks(even_ticks)
+                ax_b.grid(True, alpha=0.3)
+                fig_b.tight_layout()
+                fig_b.savefig(out_dir / bins_rn, dpi=300)
+                plt.close(fig_b)
 
-            fig_b, ax_b = plt.subplots(figsize=(7, 5))
-            ax_b.bar(x, counts, width=0.8, align="center")
-            ax_b.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
-            ax_b.set_ylabel("Number of pairs")
-            ax_b.set_title(f"Bin distribution ({bins_rn})\nranks 1–{n}")
-            ax_b.set_xticks(x)
-            ax_b.grid(True, alpha=0.3)
-            fig_b.tight_layout()
-            fig_b.savefig(out_dir / bins_rn, dpi=150)
-            plt.close(fig_b)
+                fig_w, ax_w = plt.subplots(figsize=(12, 10))
+                ax_w.bar(x, weights, width=0.8, align="center")
+                ax_w.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+                ax_w.set_ylabel("Bin weight (fraction of pairs)")
+                ax_w.set_xticks(even_ticks)
+                ax_w.grid(True, alpha=0.3)
+                fig_w.tight_layout()
+                fig_w.savefig(out_dir / weights_rn, dpi=300)
+                plt.close(fig_w)
 
-            fig_w, ax_w = plt.subplots(figsize=(7, 5))
-            ax_w.bar(x, weights, width=0.8, align="center")
-            ax_w.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
-            ax_w.set_ylabel("Bin weight (fraction of pairs)")
-            ax_w.set_title(f"Bin weights ({weights_rn})\nranks 1–{n}")
-            ax_w.set_xticks(x)
-            ax_w.grid(True, alpha=0.3)
-            fig_w.tight_layout()
-            fig_w.savefig(out_dir / weights_rn, dpi=150)
-            plt.close(fig_w)
+            # --- Legacy filenames (W&B / scripts): last non-empty Top-K in n_values order ---
+            n_legacy, counts_l, weights_l = _legacy_bins_weights()
+            if counts_l is not None and weights_l is not None and n_legacy is not None:
+                fig1, ax1 = plt.subplots(figsize=(12, 10))
+                ax1.bar(x, counts_l, width=0.8, align="center")
+                ax1.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+                ax1.set_ylabel("Number of pairs")
+                ax1.set_xticks(even_ticks)
+                ax1.grid(True, alpha=0.3)
+                fig1.tight_layout()
+                fig1.savefig(out_dir / bins_filename, dpi=300)
+                plt.close(fig1)
 
-        # --- Legacy filenames (W&B / scripts): last non-empty Top-K in n_values order ---
-        n_legacy, counts_l, weights_l = _legacy_bins_weights()
-        if counts_l is not None and weights_l is not None and n_legacy is not None:
-            fig1, ax1 = plt.subplots(figsize=(7, 5))
-            ax1.bar(x, counts_l, width=0.8, align="center")
-            ax1.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
-            ax1.set_ylabel("Number of pairs")
-            ax1.set_title(
-                f"Bin distribution ({bins_filename})\nranks 1–{n_legacy}"
+                fig_w0, ax_w0 = plt.subplots(figsize=(12, 10))
+                ax_w0.bar(x, weights_l, width=0.8, align="center")
+                ax_w0.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+                ax_w0.set_ylabel("Bin weight (fraction of pairs)")
+                ax_w0.set_xticks(even_ticks)
+                ax_w0.grid(True, alpha=0.3)
+                fig_w0.tight_layout()
+                fig_w0.savefig(out_dir / weights_filename, dpi=300)
+                plt.close(fig_w0)
+
+            # --- Calibration curves (all Top-K on one axis) ---
+            fig2, ax2 = plt.subplots(figsize=(12, 10))
+            ax2.plot(
+                perfect_x,
+                perfect_y,
+                color="grey",
+                linestyle="--",
+                linewidth=_ECE_REF_LINEWIDTH,
+                label="Perfect calibration",
+                zorder=0,
             )
-            ax1.set_xticks(x)
-            ax1.grid(True, alpha=0.3)
-            fig1.tight_layout()
-            fig1.savefig(out_dir / bins_filename, dpi=150)
-            plt.close(fig1)
+            for i, n in enumerate(n_values):
+                if i >= len(bin_accs_per_topk):
+                    break
+                curve = bin_accs_per_topk[i]
+                # Same default color cycle as _plot_ece ("Recall per bin"); do not pass color= so C0,C1,… match R@1,R@5,…
+                ax2.plot(
+                    x,
+                    curve,
+                    marker="o",
+                    markersize=_ECE_MARKERSIZE,
+                    linewidth=_ECE_DATA_LINEWIDTH,
+                    linestyle="-",
+                    label=f"R@{n}",
+                    zorder=1,
+                )
+            ax2.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
+            ax2.set_ylabel("Pair hit rate")
+            ax2.set_xticks(even_ticks)
+            ax2.set_ylim(-0.02, 1.02)
+            ax2.legend(loc="lower left", prop={"weight": "bold"})
+            ax2.grid(True, alpha=0.3)
+            fig2.tight_layout()
+            fig2.savefig(out_dir / plot_filename, dpi=300)
+            plt.close(fig2)
 
-            fig_w0, ax_w0 = plt.subplots(figsize=(7, 5))
-            ax_w0.bar(x, weights_l, width=0.8, align="center")
-            ax_w0.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
-            ax_w0.set_ylabel("Bin weight (fraction of pairs)")
-            ax_w0.set_title(
-                f"Bin weights ({weights_filename})\nranks 1–{n_legacy}"
+            logger.debug(
+                "Pairwise ECE plots saved under %s (curves: %s; bins/weights per R@K + legacy %s / %s)",
+                out_dir,
+                plot_filename,
+                bins_filename,
+                weights_filename,
             )
-            ax_w0.set_xticks(x)
-            ax_w0.grid(True, alpha=0.3)
-            fig_w0.tight_layout()
-            fig_w0.savefig(out_dir / weights_filename, dpi=150)
-            plt.close(fig_w0)
-
-        # --- Calibration curves (all Top-K on one axis) ---
-        fig2, ax2 = plt.subplots(figsize=(7, 5))
-        ax2.plot(perfect_x, perfect_y, "k--", linewidth=1.5, label="Perfect calibration", zorder=0)
-        for i, n in enumerate(n_values):
-            if i >= len(bin_accs_per_topk):
-                break
-            curve = bin_accs_per_topk[i]
-            # Same default color cycle as _plot_ece ("Recall per bin"); do not pass color= so C0,C1,… match R@1,R@5,…
-            ax2.plot(x, curve, marker="o", linestyle="-", label=f"R@{n}", zorder=1)
-        ax2.set_xlabel("Uncertainty bin (low $\\rightarrow$ high)")
-        ax2.set_ylabel("Pair hit rate")
-        ax2.set_xticks(x)
-        ax2.set_ylim(-0.02, 1.02)
-        ax2.legend(loc="lower left", fontsize=9)
-        ax2.grid(True, alpha=0.3)
-        fig2.tight_layout()
-        fig2.savefig(out_dir / plot_filename, dpi=150)
-        plt.close(fig2)
-
-        logger.debug(
-            "Pairwise ECE plots saved under %s (curves: %s; bins/weights per R@K + legacy %s / %s)",
-            out_dir,
-            plot_filename,
-            bins_filename,
-            weights_filename,
-        )
     except ImportError:
         logger.warning("matplotlib not installed, skipping pairwise ECE plot.")
