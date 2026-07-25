@@ -69,10 +69,7 @@ def train(args, model, device, dataset_name, datasets_dir):
 
     # Each group has its own classifier, which depends on the number of classes in the group
     classifiers = [
-        cosface_loss.MarginCosineProduct(
-            args['descriptors_dimension'], len(group),
-            s=args.get('s', 100.0), m=args.get('m', 0.4),
-        )
+        cosface_loss.MarginCosineProduct(args['descriptors_dimension'], len(group))
         for group in groups
     ]
     classifiers_optimizers = [torch.optim.Adam(classifier.parameters(), lr=args['classifiers_lr']) for classifier in classifiers]
